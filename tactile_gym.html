@@ -64,7 +64,7 @@
 <!-- Buttons in one row -->
 <div class="button-container">
     <button class="button" id="randomizeEnv">Randomize Environment</button>
-    <button class="button" id="toggleBgButton">Hide Background</button>
+    <button class="button" id="toggleBgButton">Show Background</button>
 </div>
 
 <!-- Sliders in two rows -->
@@ -126,7 +126,7 @@ const backgroundCoeff = 0.001;
 let shapes = [];
 let previousPositions = [];
 let lastTimestamp = 0;
-let showBackground = true; // toggled by the button
+let showBackground = false; // toggled by the button
 
 // --------------------------------------------------------------------------------
 // Environment setup + shape generation
