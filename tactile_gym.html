@@ -1,28 +1,3 @@
-<!--
-    This file is part of the Tactile Sensing Playground project.
-    Copyright (C) 2025 Max Muchen Sun
-
-    This program is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation, either version 3 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program. If not, see <https://www.gnu.org/licenses/>.
--->
-
-<!-- 
-    Author: Max Muchen Sun (msun@u.northwestern.edu)
-    Date: 2025-03-06
-    Description: Tactile Sensing Playground
--->
-
-
 <!DOCTYPE html>
 <html>
 
@@ -98,6 +73,7 @@
     <div class="button-container">
         <button class="button" id="randomizeEnv">Randomize Environment</button>
         <button class="button" id="toggleBgButton">Show Background</button>
+        <button class="button" id="toggleSpatialResButton">Disable Spatial Distribution</button>
     </div>
 
     <!-- Sliders in two rows -->
@@ -133,6 +109,7 @@
         const gridCountSlider = document.getElementById("gridCountSlider");
         const gridCountValue = document.getElementById("gridCountValue");
         const toggleBgButton = document.getElementById("toggleBgButton");
+        const toggleSpatialResButton = document.getElementById("toggleSpatialResButton");
 
         // --------------------------------------------------------------------------------
         // Global state + parameters
@@ -161,6 +138,9 @@
         let previousPositions = [];
         let lastTimestamp = 0;
         let showBackground = false; // toggled by the button
+
+        // New flag to control spatial resolution
+        let disableSpatialResolution = false;
 
         // --------------------------------------------------------------------------------
         // Environment setup + shape generation
@@ -408,45 +388,87 @@
         }
 
         // Modified drawCameraGridDots function.
-        // The dot's diameter is equal to the grid cell size so that the dots always fill the sensor box.
-        // Also, getShapeAt now checks if any part of the dot (circle) intersects a shape.
+        // When spatial resolution is enabled, each dot is computed independently.
+        // When disabled, we first compute the maximum reading across all dots and then draw every dot with that same reading.
         function drawCameraGridDots(dt) {
             if (dt <= 0) dt = 0.016;
             const cellSize = camSize / gridCount;
             const dotRadius = cellSize / 2;
 
-            for (let i = 0; i < gridCount; i++) {
-                for (let j = 0; j < gridCount; j++) {
-                    let localX = (i + 0.5) * cellSize;
-                    let localY = (j + 0.5) * cellSize;
+            if (disableSpatialResolution) {
+                let maxReading = 0;
+                let readings = [];
+                // First pass: compute readings for all dots.
+                for (let i = 0; i < gridCount; i++) {
+                    readings[i] = [];
+                    for (let j = 0; j < gridCount; j++) {
+                        let localX = (i + 0.5) * cellSize;
+                        let localY = (j + 0.5) * cellSize;
+                        let globalX = camX + localX;
+                        let globalY = camY + localY;
+                        let oldX = previousPositions[i][j].x;
+                        let oldY = previousPositions[i][j].y;
+                        let dx = globalX - oldX;
+                        let dy = globalY - oldY;
+                        let distance = Math.sqrt(dx * dx + dy * dy);
+                        let velocity = distance / dt;
+                        let shape = getShapeAt(globalX, globalY, dotRadius);
+                        let coeff = shape ? shape.coefficient : backgroundCoeff;
+                        let reading = velocity * coeff;
+                        readings[i][j] = reading;
+                        if (reading > maxReading) maxReading = reading;
+                    }
+                }
+                // Second pass: draw all dots with the maximum reading.
+                for (let i = 0; i < gridCount; i++) {
+                    for (let j = 0; j < gridCount; j++) {
+                        let localX = (i + 0.5) * cellSize;
+                        let localY = (j + 0.5) * cellSize;
+                        let fillColor = colorMap(maxReading);
+                        cameraCtx.beginPath();
+                        cameraCtx.arc(localX, localY, dotRadius, 0, 2 * Math.PI);
+                        cameraCtx.fillStyle = fillColor;
+                        cameraCtx.fill();
+                        cameraCtx.strokeStyle = "black";
+                        cameraCtx.stroke();
 
-                    let globalX = camX + localX;
-                    let globalY = camY + localY;
+                        // Update previous positions.
+                        let globalX = camX + localX;
+                        let globalY = camY + localY;
+                        previousPositions[i][j].x = globalX;
+                        previousPositions[i][j].y = globalY;
+                    }
+                }
+            } else {
+                // Default behavior: compute and draw each dot individually.
+                for (let i = 0; i < gridCount; i++) {
+                    for (let j = 0; j < gridCount; j++) {
+                        let localX = (i + 0.5) * cellSize;
+                        let localY = (j + 0.5) * cellSize;
+                        let globalX = camX + localX;
+                        let globalY = camY + localY;
+                        let oldX = previousPositions[i][j].x;
+                        let oldY = previousPositions[i][j].y;
+                        let dx = globalX - oldX;
+                        let dy = globalY - oldY;
+                        let distance = Math.sqrt(dx * dx + dy * dy);
+                        let velocity = distance / dt;
+                        let shape = getShapeAt(globalX, globalY, dotRadius);
+                        let coeff = shape ? shape.coefficient : backgroundCoeff;
+                        let reading = velocity * coeff;
+                        let fillColor = colorMap(reading);
 
-                    let oldX = previousPositions[i][j].x;
-                    let oldY = previousPositions[i][j].y;
-                    let dx = globalX - oldX;
-                    let dy = globalY - oldY;
-                    let distance = Math.sqrt(dx * dx + dy * dy);
-                    let velocity = distance / dt;
+                        cameraCtx.beginPath();
+                        cameraCtx.arc(localX, localY, dotRadius, 0, 2 * Math.PI);
+                        cameraCtx.fillStyle = fillColor;
+                        cameraCtx.fill();
+                        cameraCtx.strokeStyle = "black";
+                        cameraCtx.stroke();
 
-                    // Pass dotRadius so the collision functions check for any overlap.
-                    let shape = getShapeAt(globalX, globalY, dotRadius);
-                    let coeff = shape ? shape.coefficient : backgroundCoeff;
-
-                    let reading = velocity * coeff;
-                    let fillColor = colorMap(reading);
-
-                    cameraCtx.beginPath();
-                    cameraCtx.arc(localX, localY, dotRadius, 0, 2 * Math.PI);
-                    cameraCtx.fillStyle = fillColor;
-                    cameraCtx.fill();
-                    cameraCtx.strokeStyle = "black";
-                    cameraCtx.stroke();
-
-                    // Update previous position.
-                    previousPositions[i][j].x = globalX;
-                    previousPositions[i][j].y = globalY;
+                        // Update previous position.
+                        previousPositions[i][j].x = globalX;
+                        previousPositions[i][j].y = globalY;
+                    }
                 }
             }
         }
@@ -562,6 +584,13 @@
 
             // Update camera view immediately:
             updateCameraView(0);
+        });
+
+        toggleSpatialResButton.addEventListener("click", () => {
+            disableSpatialResolution = !disableSpatialResolution;
+            toggleSpatialResButton.textContent = disableSpatialResolution
+                ? "Enable spatial resolution"
+                : "Disable spatial resolution";
         });
 
         // --------------------------------------------------------------------------------
