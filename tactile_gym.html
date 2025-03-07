@@ -25,6 +25,7 @@
 
 <!DOCTYPE html>
 <html>
+
 <head>
     <title>Tactile Sensing Playground</title>
     <style>
@@ -36,6 +37,7 @@
             height: 100vh;
             background-color: white;
         }
+
         .container {
             position: relative;
             width: 640px;
@@ -43,6 +45,7 @@
             border: 3px solid black;
             margin-bottom: 10px;
         }
+
         .camera-view {
             position: absolute;
             border: 3px solid black;
@@ -52,6 +55,7 @@
             justify-content: center;
             align-items: center;
         }
+
         .button-container {
             display: flex;
             flex-direction: row;
@@ -59,11 +63,13 @@
             align-items: center;
             margin-bottom: 10px;
         }
+
         .button {
             padding: 10px;
             font-size: 14px;
             cursor: pointer;
         }
+
         /* Two-row slider layout */
         .slider-container {
             display: flex;
@@ -73,500 +79,514 @@
         }
     </style>
 </head>
+
 <body>
 
-<h2>Tactile Sensing Playground</h2>
-<h3 style="margin-top: 0; margin-bottom: 0.2;">Author: <a href="https://maxsun.io/" target="_blank">Max Muchen Sun</a> | March, 2025</h3>
+    <h2>Tactile Sensing Playground</h2>
+    <h3 style="margin-top: 0; margin-bottom: 0.2;">Author: <a href="https://maxsun.io/" target="_blank">Max Muchen
+            Sun</a> | March, 2025</h3>
 
-<div class="container" id="env-container">
-    <canvas id="offscreenCanvas" width="640" height="640" style="display:none;"></canvas>
-    <canvas id="envCanvas" width="640" height="640"></canvas>
-    <div class="camera-view" id="cameraView">
-        <canvas id="cameraCanvas"></canvas>
+    <div class="container" id="env-container">
+        <canvas id="offscreenCanvas" width="640" height="640" style="display:none;"></canvas>
+        <canvas id="envCanvas" width="640" height="640"></canvas>
+        <div class="camera-view" id="cameraView">
+            <canvas id="cameraCanvas"></canvas>
+        </div>
     </div>
-</div>
 
-<!-- Buttons in one row -->
-<div class="button-container">
-    <button class="button" id="randomizeEnv">Randomize Environment</button>
-    <button class="button" id="toggleBgButton">Show Background</button>
-</div>
-
-<!-- Sliders in two rows -->
-<div class="slider-container">
-    <div>
-        <label for="camSizeSlider">Sensor Size:</label>
-        <input type="range" id="camSizeSlider" min="48" max="640" step="4" value="64">
-        <span id="camSizeValue">64</span>
+    <!-- Buttons in one row -->
+    <div class="button-container">
+        <button class="button" id="randomizeEnv">Randomize Environment</button>
+        <button class="button" id="toggleBgButton">Show Background</button>
     </div>
-    <div>
-        <label for="gridCountSlider">Receptor Density:</label>
-        <!-- Changed min from "2" to "1" -->
-        <input type="range" id="gridCountSlider" min="1" max="8" step="1" value="4">
-        <span id="gridCountValue">4</span>
+
+    <!-- Sliders in two rows -->
+    <div class="slider-container">
+        <div>
+            <label for="camSizeSlider">Sensor Size:</label>
+            <input type="range" id="camSizeSlider" min="48" max="640" step="4" value="64">
+            <span id="camSizeValue">64</span>
+        </div>
+        <div>
+            <label for="gridCountSlider">Receptor Density:</label>
+            <!-- Changed min from "2" to "1" -->
+            <input type="range" id="gridCountSlider" min="1" max="8" step="1" value="4">
+            <span id="gridCountValue">4</span>
+        </div>
     </div>
-</div>
-
-<script>
-// --------------------------------------------------------------------------------
-// DOM elements
-// --------------------------------------------------------------------------------
-const offscreenCanvas = document.getElementById("offscreenCanvas");
-const offscreenCtx = offscreenCanvas.getContext("2d");
-const envCanvas = document.getElementById("envCanvas");
-const envCtx = envCanvas.getContext("2d");
-const cameraCanvas = document.getElementById("cameraCanvas");
-const cameraCtx = cameraCanvas.getContext("2d");
-const cameraView = document.getElementById("cameraView");
-
-const randomizeButton = document.getElementById("randomizeEnv");
-const camSizeSlider = document.getElementById("camSizeSlider");
-const camSizeValue = document.getElementById("camSizeValue");
-const gridCountSlider = document.getElementById("gridCountSlider");
-const gridCountValue = document.getElementById("gridCountValue");
-const toggleBgButton = document.getElementById("toggleBgButton");
-
-// --------------------------------------------------------------------------------
-// Global state + parameters
-// --------------------------------------------------------------------------------
-const envSize = 640;
-let camSize = parseInt(camSizeSlider.value);
-let gridCount = parseInt(gridCountSlider.value);
-
-let cameraX = envSize / 2;
-let cameraY = envSize / 2;
-let camX = envSize / 2;
-let camY = envSize / 2;
-let targetX = cameraX;
-let targetY = cameraY;
-const trackingSpeed = 0.2;
-
-const colors = ["#1F77B4", "#FF7F0E", "#2CA02C"]; // shape colors
-const colorCoefficientMap = {
-  "#1F77B4": 0.5,
-  "#FF7F0E": 0.05,
-  "#2CA02C": 0.2
-};
-const backgroundCoeff = 0.001;
-
-let shapes = [];
-let previousPositions = [];
-let lastTimestamp = 0;
-let showBackground = false; // toggled by the button
-
-// --------------------------------------------------------------------------------
-// Environment setup + shape generation
-// --------------------------------------------------------------------------------
-function shuffleArray(array) {
-  for (let i = array.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [array[i], array[j]] = [array[j], array[i]];
-  }
-}
-
-function getNonOverlappingPosition(size, minDistance, existingObjects) {
-  let x, y;
-  let attempts = 0;
-  let overlapping;
-  do {
-    if (attempts++ > 1000) {
-      console.warn("Could not find a suitable position for a shape.");
-      return null;
-    }
-    x = Math.random() * (envSize - size);
-    y = Math.random() * (envSize - size);
-    overlapping = existingObjects.some(obj => {
-      let dx = (obj.x + obj.size / 2) - (x + size / 2);
-      let dy = (obj.y + obj.size / 2) - (y + size / 2);
-      let distance = Math.sqrt(dx * dx + dy * dy);
-      return distance < (obj.size / 2 + size / 2 + minDistance);
-    });
-  } while (overlapping);
-  existingObjects.push({ x, y, size });
-  return { x, y };
-}
-
-function drawRotatedRect(ctx, x, y, width, height, angle, fillColor) {
-  ctx.save();
-  ctx.translate(x + width / 2, y + height / 2);
-  ctx.rotate(angle);
-  ctx.fillStyle = fillColor;
-  ctx.fillRect(-width / 2, -height / 2, width, height);
-  ctx.restore();
-}
-
-function drawRotatedTriangle(ctx, x, y, size, angle, fillColor) {
-  ctx.save();
-  ctx.translate(x + size / 2, y + size / 2);
-  ctx.rotate(angle);
-  ctx.fillStyle = fillColor;
-  ctx.beginPath();
-  ctx.moveTo(-size / 2, size / 2);
-  ctx.lineTo(size / 2, size / 2);
-  ctx.lineTo(0, -size / 2);
-  ctx.closePath();
-  ctx.fill();
-  ctx.restore();
-}
-
-// --------------------------------------------------------------------------------
-// Point-in-shape checks and collision detection for receptors (dots)
-// --------------------------------------------------------------------------------
-
-// For square: check if a circle (center, radius) intersects a rotated square.
-function intersectsSquare(circleX, circleY, r, shape) {
-  const centerX = shape.x + shape.size / 2;
-  const centerY = shape.y + shape.size / 2;
-  let dx = circleX - centerX;
-  let dy = circleY - centerY;
-  let cosA = Math.cos(-shape.angle);
-  let sinA = Math.sin(-shape.angle);
-  let rx = dx * cosA - dy * sinA;
-  let ry = dx * sinA + dy * cosA;
-  let half = shape.size / 2;
-  // Find the closest point on the square to the circle center.
-  let closestX = Math.max(-half, Math.min(rx, half));
-  let closestY = Math.max(-half, Math.min(ry, half));
-  let diffX = rx - closestX;
-  let diffY = ry - closestY;
-  return (diffX * diffX + diffY * diffY) <= r * r;
-}
-
-// Helper for triangle collision detection.
-function pointInTriangle(px, py, x1, y1, x2, y2, x3, y3) {
-  let areaOrig = Math.abs((x2 - x1) * (y3 - y1) - (x3 - x1) * (y2 - y1));
-  let area1 = Math.abs((x1 - px) * (y2 - py) - (x2 - px) * (y1 - py));
-  let area2 = Math.abs((x2 - px) * (y3 - py) - (x3 - px) * (y2 - py));
-  let area3 = Math.abs((x3 - px) * (y1 - py) - (x1 - px) * (y3 - py));
-  return Math.abs(area1 + area2 + area3 - areaOrig) < 0.01;
-}
-
-function distancePointToSegment(px, py, x1, y1, x2, y2) {
-  let l2 = (x2 - x1) ** 2 + (y2 - y1) ** 2;
-  if (l2 === 0) return Math.hypot(px - x1, py - y1);
-  let t = ((px - x1) * (x2 - x1) + (py - y1) * (y2 - y1)) / l2;
-  t = Math.max(0, Math.min(1, t));
-  let projX = x1 + t * (x2 - x1);
-  let projY = y1 + t * (y2 - y1);
-  return Math.hypot(px - projX, py - projY);
-}
-
-function intersectsTriangle(circleX, circleY, r, shape) {
-  const centerX = shape.x + shape.size / 2;
-  const centerY = shape.y + shape.size / 2;
-  let dx = circleX - centerX;
-  let dy = circleY - centerY;
-  let cosA = Math.cos(-shape.angle);
-  let sinA = Math.sin(-shape.angle);
-  let rx = dx * cosA - dy * sinA;
-  let ry = dx * sinA + dy * cosA;
-  let half = shape.size / 2;
-  // Define triangle vertices as used in drawRotatedTriangle.
-  let A = { x: -half, y: half };
-  let B = { x: half, y: half };
-  let C = { x: 0, y: -half };
-  // Check if circle center is inside the triangle.
-  if (pointInTriangle(rx, ry, A.x, A.y, B.x, B.y, C.x, C.y)) return true;
-  // Otherwise, check the distance from circle center to each edge.
-  if (distancePointToSegment(rx, ry, A.x, A.y, B.x, B.y) <= r) return true;
-  if (distancePointToSegment(rx, ry, B.x, B.y, C.x, C.y) <= r) return true;
-  if (distancePointToSegment(rx, ry, C.x, C.y, A.x, A.y) <= r) return true;
-  return false;
-}
-
-// For circle shapes, check if the receptor circle intersects the shape's circle.
-function intersectsCircle(circleX, circleY, r, shape) {
-  let dx = circleX - shape.x;
-  let dy = circleY - shape.y;
-  let dist = Math.sqrt(dx * dx + dy * dy);
-  return dist <= (shape.radius + r);
-}
-
-// Modified getShapeAt: returns the shape if the receptor circle (center, radius) intersects it.
-function getShapeAt(px, py, dotRadius) {
-  for (let s of shapes) {
-    if (s.type === "square" && intersectsSquare(px, py, dotRadius, s)) return s;
-    if (s.type === "triangle" && intersectsTriangle(px, py, dotRadius, s)) return s;
-    if (s.type === "circle" && intersectsCircle(px, py, dotRadius, s)) return s;
-  }
-  return null;
-}
-
-// --------------------------------------------------------------------------------
-// Drawing the environment and refreshing the main canvas
-// --------------------------------------------------------------------------------
-function drawEnvironment(ctx) {
-  ctx.fillStyle = "#F0F0F0";
-  ctx.fillRect(0, 0, envSize, envSize);
-
-  shuffleArray(colors);
-
-  const existingObjects = [];
-  const minDistance = 50;
-
-  const squareSize = Math.random() * 80 + 150;
-  const triangleSize = Math.random() * 100 + 180;
-  const circleRadius = Math.random() * 50 + 80;
-
-  let squarePos = getNonOverlappingPosition(squareSize, minDistance, existingObjects);
-  let trianglePos = getNonOverlappingPosition(triangleSize, minDistance, existingObjects);
-  let circlePos = getNonOverlappingPosition(circleRadius * 2, minDistance, existingObjects);
-
-  if (!squarePos || !trianglePos || !circlePos) {
-    console.error("Failed to place all shapes with the given constraints.");
-    return;
-  }
-
-  const squareAngle = Math.random() * Math.PI * 2;
-  const triangleAngle = Math.random() * Math.PI * 2;
-
-  const squareColor = colors[0];
-  const triangleColor = colors[1];
-  const circleColor = colors[2];
-
-  // Draw square
-  drawRotatedRect(ctx, squarePos.x, squarePos.y, squareSize, squareSize, squareAngle, squareColor);
-  // Draw triangle
-  drawRotatedTriangle(ctx, trianglePos.x, trianglePos.y, triangleSize, triangleAngle, triangleColor);
-  // Draw circle
-  ctx.fillStyle = circleColor;
-  ctx.beginPath();
-  ctx.arc(circlePos.x + circleRadius, circlePos.y + circleRadius, circleRadius, 0, Math.PI * 2);
-  ctx.fill();
-
-  shapes = [
-    {
-      type: "square",
-      x: squarePos.x,
-      y: squarePos.y,
-      size: squareSize,
-      angle: squareAngle,
-      fillColor: squareColor,
-      coefficient: colorCoefficientMap[squareColor]
-    },
-    {
-      type: "triangle",
-      x: trianglePos.x,
-      y: trianglePos.y,
-      size: triangleSize,
-      angle: triangleAngle,
-      fillColor: triangleColor,
-      coefficient: colorCoefficientMap[triangleColor]
-    },
-    {
-      type: "circle",
-      x: circlePos.x + circleRadius,
-      y: circlePos.y + circleRadius,
-      radius: circleRadius,
-      fillColor: circleColor,
-      coefficient: colorCoefficientMap[circleColor]
-    }
-  ];
-}
-
-function refreshMainCanvas() {
-  if (showBackground) {
-    envCtx.drawImage(offscreenCanvas, 0, 0);
-  } else {
-    envCtx.clearRect(0, 0, envSize, envSize);
-    envCtx.fillStyle = "white";
-    envCtx.fillRect(0, 0, envSize, envSize);
-  }
-}
-
-// --------------------------------------------------------------------------------
-// Camera + tactile dots
-// --------------------------------------------------------------------------------
-function centerCamera() {
-  cameraX = envSize / 2;
-  cameraY = envSize / 2;
-}
-
-function initializePreviousPositions() {
-  previousPositions = [];
-  for (let i = 0; i < gridCount; i++) {
-    previousPositions[i] = [];
-    for (let j = 0; j < gridCount; j++) {
-      previousPositions[i][j] = { x: camX, y: camY };
-    }
-  }
-}
-
-const maxReadingForDisplay = 5;
-function colorMap(value) {
-  let f = Math.min(value / maxReadingForDisplay, 1);
-  let shade = 255 * (1 - f); // 255 => white, 0 => black
-  return `rgb(${shade},${shade},${shade})`;
-}
-
-// Modified drawCameraGridDots function.
-// The dot's diameter is equal to the grid cell size so that the dots always fill the sensor box.
-// Also, getShapeAt now checks if any part of the dot (circle) intersects a shape.
-function drawCameraGridDots(dt) {
-  if (dt <= 0) dt = 0.016;
-  const cellSize = camSize / gridCount;
-  const dotRadius = cellSize / 2;
-
-  for (let i = 0; i < gridCount; i++) {
-    for (let j = 0; j < gridCount; j++) {
-      let localX = (i + 0.5) * cellSize;
-      let localY = (j + 0.5) * cellSize;
-
-      let globalX = camX + localX;
-      let globalY = camY + localY;
-
-      let oldX = previousPositions[i][j].x;
-      let oldY = previousPositions[i][j].y;
-      let dx = globalX - oldX;
-      let dy = globalY - oldY;
-      let distance = Math.sqrt(dx * dx + dy * dy);
-      let velocity = distance / dt;
-
-      // Pass dotRadius so the collision functions check for any overlap.
-      let shape = getShapeAt(globalX, globalY, dotRadius);
-      let coeff = shape ? shape.coefficient : backgroundCoeff;
-
-      let reading = velocity * coeff;
-      let fillColor = colorMap(reading);
-
-      cameraCtx.beginPath();
-      cameraCtx.arc(localX, localY, dotRadius, 0, 2 * Math.PI);
-      cameraCtx.fillStyle = fillColor;
-      cameraCtx.fill();
-      cameraCtx.strokeStyle = "black";
-      cameraCtx.stroke();
-
-      // Update previous position.
-      previousPositions[i][j].x = globalX;
-      previousPositions[i][j].y = globalY;
-    }
-  }
-}
-
-function updateCameraView(dt) {
-  // Smoothly track the mouse position
-  cameraX += (targetX - cameraX) * trackingSpeed;
-  cameraY += (targetY - cameraY) * trackingSpeed;
-
-  // Constrain so camera box is within [0..(640-camSize)]
-  camX = Math.max(0, Math.min(envSize - camSize - 5, cameraX - camSize / 2));
-  camY = Math.max(0, Math.min(envSize - camSize - 5, cameraY - camSize / 2));
-
-  cameraCanvas.width = camSize;
-  cameraCanvas.height = camSize;
-
-  // Draw environment or white, depending on toggle
-  if (showBackground) {
-    cameraCtx.drawImage(offscreenCanvas, camX, camY, camSize, camSize, 0, 0, camSize, camSize);
-  } else {
-    cameraCtx.clearRect(0, 0, camSize, camSize);
-    cameraCtx.fillStyle = "white";
-    cameraCtx.fillRect(0, 0, camSize, camSize);
-  }
-
-  // Then draw the tactile dots
-  drawCameraGridDots(dt);
-
-  // Position the camera-view element
-  cameraView.style.width = `${camSize}px`;
-  cameraView.style.height = `${camSize}px`;
-  cameraView.style.left = `${camX}px`;
-  cameraView.style.top = `${camY}px`;
-}
-
-// --------------------------------------------------------------------------------
-// Animation loop
-// --------------------------------------------------------------------------------
-function animate(timestamp) {
-  let dt = (timestamp - lastTimestamp) / 1000;
-  lastTimestamp = timestamp;
-
-  updateCameraView(dt);
-  requestAnimationFrame(animate);
-}
-
-// --------------------------------------------------------------------------------
-// Event listeners
-// --------------------------------------------------------------------------------
-document.getElementById("env-container").addEventListener("mousemove", (event) => {
-  const rect = document.getElementById("env-container").getBoundingClientRect();
-  const mouseX = event.clientX - rect.left;
-  const mouseY = event.clientY - rect.top;
-  targetX = mouseX;
-  targetY = mouseY;
-});
-
-randomizeButton.addEventListener("click", () => {
-  // Generate new environment into offscreenCanvas
-  drawEnvironment(offscreenCtx);
-  // Show it on the main canvas (depending on toggle)
-  refreshMainCanvas();
-
-  // Re-center camera so it starts in the middle
-  centerCamera();
-
-  // Re-init previous positions so velocity doesn't jump
-  initializePreviousPositions();
-
-  // Optionally do a quick update to place camera immediately
-  updateCameraView(0);
-});
-
-camSizeSlider.addEventListener("input", function () {
-  let rawValue = parseInt(this.value);
-  camSize = Math.round(rawValue / 4) * 4; 
-  camSizeSlider.value = camSize;
-  camSizeValue.textContent = camSize;
-
-  // Re-init positions to avoid velocity spikes
-  initializePreviousPositions();
-  updateCameraView(0);
-});
-
-gridCountSlider.addEventListener("input", function() {
-  gridCount = parseInt(this.value);
-  gridCountValue.textContent = gridCount;
-
-  // Re-init positions
-  initializePreviousPositions();
-  updateCameraView(0);
-});
-
-toggleBgButton.addEventListener("click", () => {
-  showBackground = !showBackground;
-  toggleBgButton.textContent = showBackground
-      ? "Hide Background"
-      : "Show Background";
-
-  // Refresh main canvas to show/hide environment
-  refreshMainCanvas();
-
-  // Update camera view immediately:
-  updateCameraView(0);
-});
-
-// --------------------------------------------------------------------------------
-// Initial startup
-// --------------------------------------------------------------------------------
-
-// 1) Generate environment in offscreen
-drawEnvironment(offscreenCtx);
-
-// 2) Show environment on main canvas from the start
-refreshMainCanvas();
-
-// 3) Center camera so it's not out of bounds
-centerCamera();
-
-// 4) Initialize dot positions
-initializePreviousPositions();
-
-// 5) Place camera box once before the main loop
-updateCameraView(0);
-
-// 6) Start animation
-requestAnimationFrame(animate);
-</script>
+
+    <script>
+        // --------------------------------------------------------------------------------
+        // DOM elements
+        // --------------------------------------------------------------------------------
+        const offscreenCanvas = document.getElementById("offscreenCanvas");
+        const offscreenCtx = offscreenCanvas.getContext("2d");
+        const envCanvas = document.getElementById("envCanvas");
+        const envCtx = envCanvas.getContext("2d");
+        const cameraCanvas = document.getElementById("cameraCanvas");
+        const cameraCtx = cameraCanvas.getContext("2d");
+        const cameraView = document.getElementById("cameraView");
+
+        const randomizeButton = document.getElementById("randomizeEnv");
+        const camSizeSlider = document.getElementById("camSizeSlider");
+        const camSizeValue = document.getElementById("camSizeValue");
+        const gridCountSlider = document.getElementById("gridCountSlider");
+        const gridCountValue = document.getElementById("gridCountValue");
+        const toggleBgButton = document.getElementById("toggleBgButton");
+
+        // --------------------------------------------------------------------------------
+        // Global state + parameters
+        // --------------------------------------------------------------------------------
+        const envSize = 640;
+        let camSize = parseInt(camSizeSlider.value);
+        let gridCount = parseInt(gridCountSlider.value);
+
+        let cameraX = envSize / 2;
+        let cameraY = envSize / 2;
+        let camX = envSize / 2;
+        let camY = envSize / 2;
+        let targetX = cameraX;
+        let targetY = cameraY;
+        const trackingSpeed = 0.2;
+
+        const colors = ["#1F77B4", "#FF7F0E", "#2CA02C"]; // shape colors
+        const colorCoefficientMap = {
+            "#1F77B4": 0.5,
+            "#FF7F0E": 0.05,
+            "#2CA02C": 0.2
+        };
+        const backgroundCoeff = 0.001;
+
+        let shapes = [];
+        let previousPositions = [];
+        let lastTimestamp = 0;
+        let showBackground = false; // toggled by the button
+
+        // --------------------------------------------------------------------------------
+        // Environment setup + shape generation
+        // --------------------------------------------------------------------------------
+        function shuffleArray(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+        }
+
+        function getNonOverlappingPosition(size, minDistance, existingObjects) {
+            let x, y;
+            let attempts = 0;
+            let overlapping;
+            do {
+                if (attempts++ > 1000) {
+                    console.warn("Could not find a suitable position for a shape.");
+                    return null;
+                }
+                x = Math.random() * (envSize - size);
+                y = Math.random() * (envSize - size);
+                overlapping = existingObjects.some(obj => {
+                    let dx = (obj.x + obj.size / 2) - (x + size / 2);
+                    let dy = (obj.y + obj.size / 2) - (y + size / 2);
+                    let distance = Math.sqrt(dx * dx + dy * dy);
+                    return distance < (obj.size / 2 + size / 2 + minDistance);
+                });
+            } while (overlapping);
+            existingObjects.push({ x, y, size });
+            return { x, y };
+        }
+
+        function drawRotatedRect(ctx, x, y, width, height, angle, fillColor) {
+            ctx.save();
+            ctx.translate(x + width / 2, y + height / 2);
+            ctx.rotate(angle);
+            ctx.fillStyle = fillColor;
+            ctx.fillRect(-width / 2, -height / 2, width, height);
+            ctx.restore();
+        }
+
+        function drawRotatedTriangle(ctx, x, y, size, angle, fillColor) {
+            ctx.save();
+            ctx.translate(x + size / 2, y + size / 2);
+            ctx.rotate(angle);
+            ctx.fillStyle = fillColor;
+            ctx.beginPath();
+            ctx.moveTo(-size / 2, size / 2);
+            ctx.lineTo(size / 2, size / 2);
+            ctx.lineTo(0, -size / 2);
+            ctx.closePath();
+            ctx.fill();
+            ctx.restore();
+        }
+
+        // --------------------------------------------------------------------------------
+        // Point-in-shape checks and collision detection for receptors (dots)
+        // --------------------------------------------------------------------------------
+
+        // For square: check if a circle (center, radius) intersects a rotated square.
+        function intersectsSquare(circleX, circleY, r, shape) {
+            const centerX = shape.x + shape.size / 2;
+            const centerY = shape.y + shape.size / 2;
+            let dx = circleX - centerX;
+            let dy = circleY - centerY;
+            let cosA = Math.cos(-shape.angle);
+            let sinA = Math.sin(-shape.angle);
+            let rx = dx * cosA - dy * sinA;
+            let ry = dx * sinA + dy * cosA;
+            let half = shape.size / 2;
+            // Find the closest point on the square to the circle center.
+            let closestX = Math.max(-half, Math.min(rx, half));
+            let closestY = Math.max(-half, Math.min(ry, half));
+            let diffX = rx - closestX;
+            let diffY = ry - closestY;
+            return (diffX * diffX + diffY * diffY) <= r * r;
+        }
+
+        // Helper for triangle collision detection.
+        function pointInTriangle(px, py, x1, y1, x2, y2, x3, y3) {
+            let areaOrig = Math.abs((x2 - x1) * (y3 - y1) - (x3 - x1) * (y2 - y1));
+            let area1 = Math.abs((x1 - px) * (y2 - py) - (x2 - px) * (y1 - py));
+            let area2 = Math.abs((x2 - px) * (y3 - py) - (x3 - px) * (y2 - py));
+            let area3 = Math.abs((x3 - px) * (y1 - py) - (x1 - px) * (y3 - py));
+            return Math.abs(area1 + area2 + area3 - areaOrig) < 0.01;
+        }
+
+        function distancePointToSegment(px, py, x1, y1, x2, y2) {
+            let l2 = (x2 - x1) ** 2 + (y2 - y1) ** 2;
+            if (l2 === 0) return Math.hypot(px - x1, py - y1);
+            let t = ((px - x1) * (x2 - x1) + (py - y1) * (y2 - y1)) / l2;
+            t = Math.max(0, Math.min(1, t));
+            let projX = x1 + t * (x2 - x1);
+            let projY = y1 + t * (y2 - y1);
+            return Math.hypot(px - projX, py - projY);
+        }
+
+        function intersectsTriangle(circleX, circleY, r, shape) {
+            const centerX = shape.x + shape.size / 2;
+            const centerY = shape.y + shape.size / 2;
+            let dx = circleX - centerX;
+            let dy = circleY - centerY;
+            let cosA = Math.cos(-shape.angle);
+            let sinA = Math.sin(-shape.angle);
+            let rx = dx * cosA - dy * sinA;
+            let ry = dx * sinA + dy * cosA;
+            let half = shape.size / 2;
+            // Define triangle vertices as used in drawRotatedTriangle.
+            let A = { x: -half, y: half };
+            let B = { x: half, y: half };
+            let C = { x: 0, y: -half };
+            // Check if circle center is inside the triangle.
+            if (pointInTriangle(rx, ry, A.x, A.y, B.x, B.y, C.x, C.y)) return true;
+            // Otherwise, check the distance from circle center to each edge.
+            if (distancePointToSegment(rx, ry, A.x, A.y, B.x, B.y) <= r) return true;
+            if (distancePointToSegment(rx, ry, B.x, B.y, C.x, C.y) <= r) return true;
+            if (distancePointToSegment(rx, ry, C.x, C.y, A.x, A.y) <= r) return true;
+            return false;
+        }
+
+        // For circle shapes, check if the receptor circle intersects the shape's circle.
+        function intersectsCircle(circleX, circleY, r, shape) {
+            let dx = circleX - shape.x;
+            let dy = circleY - shape.y;
+            let dist = Math.sqrt(dx * dx + dy * dy);
+            return dist <= (shape.radius + r);
+        }
+
+        // Modified getShapeAt: returns the shape if the receptor circle (center, radius) intersects it.
+        function getShapeAt(px, py, dotRadius) {
+            for (let s of shapes) {
+                if (s.type === "square" && intersectsSquare(px, py, dotRadius, s)) return s;
+                if (s.type === "triangle" && intersectsTriangle(px, py, dotRadius, s)) return s;
+                if (s.type === "circle" && intersectsCircle(px, py, dotRadius, s)) return s;
+            }
+            return null;
+        }
+
+        // --------------------------------------------------------------------------------
+        // Drawing the environment and refreshing the main canvas
+        // --------------------------------------------------------------------------------
+        function drawEnvironment(ctx) {
+            ctx.fillStyle = "#F0F0F0";
+            ctx.fillRect(0, 0, envSize, envSize);
+
+            shuffleArray(colors);
+
+            const existingObjects = [];
+            const minDistance = 50;
+
+            const squareSize = Math.random() * 80 + 150;
+            const triangleSize = Math.random() * 100 + 180;
+            const circleRadius = Math.random() * 50 + 80;
+
+            let squarePos = getNonOverlappingPosition(squareSize, minDistance, existingObjects);
+            let trianglePos = getNonOverlappingPosition(triangleSize, minDistance, existingObjects);
+            let circlePos = getNonOverlappingPosition(circleRadius * 2, minDistance, existingObjects);
+
+            if (!squarePos || !trianglePos || !circlePos) {
+                console.error("Failed to place all shapes with the given constraints.");
+                return;
+            }
+
+            const squareAngle = Math.random() * Math.PI * 2;
+            const triangleAngle = Math.random() * Math.PI * 2;
+
+            const squareColor = colors[0];
+            const triangleColor = colors[1];
+            const circleColor = colors[2];
+
+            // Draw square
+            drawRotatedRect(ctx, squarePos.x, squarePos.y, squareSize, squareSize, squareAngle, squareColor);
+            // Draw triangle
+            drawRotatedTriangle(ctx, trianglePos.x, trianglePos.y, triangleSize, triangleAngle, triangleColor);
+            // Draw circle
+            ctx.fillStyle = circleColor;
+            ctx.beginPath();
+            ctx.arc(circlePos.x + circleRadius, circlePos.y + circleRadius, circleRadius, 0, Math.PI * 2);
+            ctx.fill();
+
+            shapes = [
+                {
+                    type: "square",
+                    x: squarePos.x,
+                    y: squarePos.y,
+                    size: squareSize,
+                    angle: squareAngle,
+                    fillColor: squareColor,
+                    coefficient: colorCoefficientMap[squareColor]
+                },
+                {
+                    type: "triangle",
+                    x: trianglePos.x,
+                    y: trianglePos.y,
+                    size: triangleSize,
+                    angle: triangleAngle,
+                    fillColor: triangleColor,
+                    coefficient: colorCoefficientMap[triangleColor]
+                },
+                {
+                    type: "circle",
+                    x: circlePos.x + circleRadius,
+                    y: circlePos.y + circleRadius,
+                    radius: circleRadius,
+                    fillColor: circleColor,
+                    coefficient: colorCoefficientMap[circleColor]
+                }
+            ];
+        }
+
+        function refreshMainCanvas() {
+            if (showBackground) {
+                envCtx.drawImage(offscreenCanvas, 0, 0);
+            } else {
+                envCtx.clearRect(0, 0, envSize, envSize);
+                envCtx.fillStyle = "white";
+                envCtx.fillRect(0, 0, envSize, envSize);
+            }
+        }
+
+        // --------------------------------------------------------------------------------
+        // Camera + tactile dots
+        // --------------------------------------------------------------------------------
+        function centerCamera() {
+            cameraX = envSize / 2;
+            cameraY = envSize / 2;
+        }
+
+        function initializePreviousPositions() {
+            previousPositions = [];
+            for (let i = 0; i < gridCount; i++) {
+                previousPositions[i] = [];
+                for (let j = 0; j < gridCount; j++) {
+                    previousPositions[i][j] = { x: camX, y: camY };
+                }
+            }
+        }
+
+        const maxReadingForDisplay = 5;
+        function colorMap(value) {
+            let f = Math.min(value / maxReadingForDisplay, 1);
+            let shade = 255 * (1 - f); // 255 => white, 0 => black
+            return `rgb(${shade},${shade},${shade})`;
+        }
+
+        // Modified drawCameraGridDots function.
+        // The dot's diameter is equal to the grid cell size so that the dots always fill the sensor box.
+        // Also, getShapeAt now checks if any part of the dot (circle) intersects a shape.
+        function drawCameraGridDots(dt) {
+            if (dt <= 0) dt = 0.016;
+            const cellSize = camSize / gridCount;
+            const dotRadius = cellSize / 2;
+
+            for (let i = 0; i < gridCount; i++) {
+                for (let j = 0; j < gridCount; j++) {
+                    let localX = (i + 0.5) * cellSize;
+                    let localY = (j + 0.5) * cellSize;
+
+                    let globalX = camX + localX;
+                    let globalY = camY + localY;
+
+                    let oldX = previousPositions[i][j].x;
+                    let oldY = previousPositions[i][j].y;
+                    let dx = globalX - oldX;
+                    let dy = globalY - oldY;
+                    let distance = Math.sqrt(dx * dx + dy * dy);
+                    let velocity = distance / dt;
+
+                    // Pass dotRadius so the collision functions check for any overlap.
+                    let shape = getShapeAt(globalX, globalY, dotRadius);
+                    let coeff = shape ? shape.coefficient : backgroundCoeff;
+
+                    let reading = velocity * coeff;
+                    let fillColor = colorMap(reading);
+
+                    cameraCtx.beginPath();
+                    cameraCtx.arc(localX, localY, dotRadius, 0, 2 * Math.PI);
+                    cameraCtx.fillStyle = fillColor;
+                    cameraCtx.fill();
+                    cameraCtx.strokeStyle = "black";
+                    cameraCtx.stroke();
+
+                    // Update previous position.
+                    previousPositions[i][j].x = globalX;
+                    previousPositions[i][j].y = globalY;
+                }
+            }
+        }
+
+        function updateCameraView(dt) {
+            // Smoothly track the mouse position
+            cameraX += (targetX - cameraX) * trackingSpeed;
+            cameraY += (targetY - cameraY) * trackingSpeed;
+
+            // Constrain so camera box is within [0..(640-camSize)]
+            camX = Math.max(0, Math.min(envSize - camSize - 5, cameraX - camSize / 2));
+            camY = Math.max(0, Math.min(envSize - camSize - 5, cameraY - camSize / 2));
+
+            cameraCanvas.width = camSize;
+            cameraCanvas.height = camSize;
+
+            // Draw environment or white, depending on toggle
+            if (showBackground) {
+                cameraCtx.drawImage(offscreenCanvas, camX, camY, camSize, camSize, 0, 0, camSize, camSize);
+            } else {
+                cameraCtx.clearRect(0, 0, camSize, camSize);
+                cameraCtx.fillStyle = "white";
+                cameraCtx.fillRect(0, 0, camSize, camSize);
+            }
+
+            // Then draw the tactile dots
+            drawCameraGridDots(dt);
+
+            // Position the camera-view element
+            cameraView.style.width = `${camSize}px`;
+            cameraView.style.height = `${camSize}px`;
+            cameraView.style.left = `${camX}px`;
+            cameraView.style.top = `${camY}px`;
+        }
+
+        // --------------------------------------------------------------------------------
+        // Animation loop
+        // --------------------------------------------------------------------------------
+        function animate(timestamp) {
+            let dt = (timestamp - lastTimestamp) / 1000;
+            lastTimestamp = timestamp;
+
+            updateCameraView(dt);
+            requestAnimationFrame(animate);
+        }
+
+        // --------------------------------------------------------------------------------
+        // Event listeners
+        // --------------------------------------------------------------------------------
+        document.getElementById("env-container").addEventListener("mousemove", (event) => {
+            const rect = document.getElementById("env-container").getBoundingClientRect();
+            const mouseX = event.clientX - rect.left;
+            const mouseY = event.clientY - rect.top;
+            targetX = mouseX;
+            targetY = mouseY;
+        });
+
+        document.getElementById("env-container").addEventListener("touchmove", (event) => {
+            // Prevent default scrolling behavior on mobile devices.
+            event.preventDefault();
+            const rect = document.getElementById("env-container").getBoundingClientRect();
+            const touch = event.touches[0];
+            const touchX = touch.clientX - rect.left;
+            const touchY = touch.clientY - rect.top;
+            targetX = touchX;
+            targetY = touchY;
+        }, { passive: false });
+
+        randomizeButton.addEventListener("click", () => {
+            // Generate new environment into offscreenCanvas
+            drawEnvironment(offscreenCtx);
+            // Show it on the main canvas (depending on toggle)
+            refreshMainCanvas();
+
+            // Re-center camera so it starts in the middle
+            centerCamera();
+
+            // Re-init previous positions so velocity doesn't jump
+            initializePreviousPositions();
+
+            // Optionally do a quick update to place camera immediately
+            updateCameraView(0);
+        });
+
+        camSizeSlider.addEventListener("input", function () {
+            let rawValue = parseInt(this.value);
+            camSize = Math.round(rawValue / 4) * 4;
+            camSizeSlider.value = camSize;
+            camSizeValue.textContent = camSize;
+
+            // Re-init positions to avoid velocity spikes
+            initializePreviousPositions();
+            updateCameraView(0);
+        });
+
+        gridCountSlider.addEventListener("input", function () {
+            gridCount = parseInt(this.value);
+            gridCountValue.textContent = gridCount;
+
+            // Re-init positions
+            initializePreviousPositions();
+            updateCameraView(0);
+        });
+
+        toggleBgButton.addEventListener("click", () => {
+            showBackground = !showBackground;
+            toggleBgButton.textContent = showBackground
+                ? "Hide Background"
+                : "Show Background";
+
+            // Refresh main canvas to show/hide environment
+            refreshMainCanvas();
+
+            // Update camera view immediately:
+            updateCameraView(0);
+        });
+
+        // --------------------------------------------------------------------------------
+        // Initial startup
+        // --------------------------------------------------------------------------------
+
+        // 1) Generate environment in offscreen
+        drawEnvironment(offscreenCtx);
+
+        // 2) Show environment on main canvas from the start
+        refreshMainCanvas();
+
+        // 3) Center camera so it's not out of bounds
+        centerCamera();
+
+        // 4) Initialize dot positions
+        initializePreviousPositions();
+
+        // 5) Place camera box once before the main loop
+        updateCameraView(0);
+
+        // 6) Start animation
+        requestAnimationFrame(animate);
+    </script>
 
 </body>
+
 </html>
