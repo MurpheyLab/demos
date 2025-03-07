@@ -25,90 +25,90 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Rectangle Localization Playground</title>
-    <style>
-        body {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            height: 100vh;
-            background-color: white;
-        }
-        .container {
-            position: relative;
-            width: 640px;
-            height: 640px;
-            border: 3px solid black;
-            margin-bottom: 10px;
-        }
-        .camera-view {
-            position: absolute;
-            border: 3px solid black;
-            /* Transparent background */
-            overflow: hidden;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-        }
-        .button-container {
-            display: flex;
-            flex-direction: row;
-            gap: 20px;
-            align-items: center;
-            margin-bottom: 10px;
-        }
-        .button {
-            padding: 10px;
-            font-size: 14px;
-            cursor: pointer;
-        }
-        .slider-container {
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-            align-items: flex-start;
-        }
-    </style>
+  <title>Rectangle Sensing Playground</title>
+  <style>
+    body {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      background-color: white;
+    }
+    .container {
+      position: relative;
+      width: 640px;
+      height: 640px;
+      border: 3px solid black;
+      margin-bottom: 10px;
+    }
+    .camera-view {
+      position: absolute;
+      border: 3px solid black;
+      /* Transparent background */
+      overflow: hidden;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+    .button-container {
+      display: flex;
+      flex-direction: row;
+      gap: 20px;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+    .button {
+      padding: 10px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    .slider-container {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      align-items: flex-start;
+    }
+  </style>
 </head>
 <body>
 
-<h2>Rectangle Localization Playground</h2>
+<h2>Rectangle Sensing Playground</h2>
 <h3 style="margin-top: 0; margin-bottom: 0.2;">
   Author: <a href="https://maxsun.io/" target="_blank">Max Muchen Sun</a> | March, 2025
 </h3>
 
 <div class="container" id="env-container">
-    <canvas id="offscreenCanvas" width="640" height="640" style="display:none;"></canvas>
-    <canvas id="envCanvas" width="640" height="640"></canvas>
-    <div class="camera-view" id="cameraView">
-        <canvas id="cameraCanvas"></canvas>
-    </div>
+  <canvas id="offscreenCanvas" width="640" height="640" style="display:none;"></canvas>
+  <canvas id="envCanvas" width="640" height="640"></canvas>
+  <div class="camera-view" id="cameraView">
+    <canvas id="cameraCanvas"></canvas>
+  </div>
 </div>
 
 <!-- Buttons in one row -->
 <div class="button-container">
-    <button class="button" id="randomizeEnv">Randomize Environment</button>
-    <button class="button" id="toggleBgButton">Show Background</button>
+  <button class="button" id="randomizeEnv">Randomize Environment</button>
+  <button class="button" id="toggleBgButton">Show Background</button>
 </div>
 
 <!-- Sliders in a column -->
 <div class="slider-container">
-    <div>
-        <label for="camSizeSlider">Sensor Size:</label>
-        <input type="range" id="camSizeSlider" min="50" max="500" step="10" value="64">
-        <span id="camSizeValue">64</span>
-    </div>
-    <div>
-        <label for="gridCountSlider">Measurement Density:</label>
-        <input type="range" id="gridCountSlider" min="1" max="36" step="1" value="4">
-        <span id="gridCountValue">4</span>
-    </div>
-    <div>
-        <label for="sensorUncertaintySlider">Sensor Uncertainty:</label>
-        <input type="range" id="sensorUncertaintySlider" min="0.0" max="1.0" step="0.1" value="0.5">
-        <span id="sensorUncertaintyValue">0.5</span>
-    </div>
+  <div>
+    <label for="camSizeSlider">Sensor Box Size:</label>
+    <input type="range" id="camSizeSlider" min="50" max="500" step="10" value="64">
+    <span id="camSizeValue">64</span>
+  </div>
+  <div>
+    <label for="gridCountSlider">Number of Samples:</label>
+    <input type="range" id="gridCountSlider" min="4" max="36" step="1" value="4">
+    <span id="gridCountValue">4</span>
+  </div>
+  <div>
+    <label for="sensorUncertaintySlider">Sensor Uncertainty:</label>
+    <input type="range" id="sensorUncertaintySlider" min="0" max="1" step="0.1" value="0.5">
+    <span id="sensorUncertaintyValue">0.5</span>
+  </div>
 </div>
 
 <script>
@@ -299,68 +299,109 @@ function sampleSensorPoints() {
 
 // --------------------------------------------------------------------------------
 // Estimate candidate rectangles based on sensor dots using both black and white dot positions.
-// When refining an edge, we restrict white dots to those that are within the corresponding
-// range in the other dimension.
+// The candidate box must not contain any white dot.
 // --------------------------------------------------------------------------------
 function estimateCandidateRectangles() {
   candidateBoxes = [];
-  const minSize = 50; // Minimum size fallback
+  const minSize = 50; // fallback minimum size
   
   // Separate black and white dots.
   const blackDots = sensorDots.filter(dot => dot.fillColor === "black");
   const whiteDots = sensorDots.filter(dot => dot.fillColor === "white");
   
+  // Helper function: check if a candidate box contains any white dot.
+  function containsWhite(box) {
+    return whiteDots.some(dot =>
+      dot.globalX > box.x && dot.globalX < box.x + box.width &&
+      dot.globalY > box.y && dot.globalY < box.y + box.height
+    );
+  }
+  
   if (blackDots.length > 0) {
-    // Compute black dot bounding box.
+    // Compute the black dot bounding box.
     const blackMinX = Math.min(...blackDots.map(dot => dot.globalX));
     const blackMaxX = Math.max(...blackDots.map(dot => dot.globalX));
     const blackMinY = Math.min(...blackDots.map(dot => dot.globalY));
     const blackMaxY = Math.max(...blackDots.map(dot => dot.globalY));
     
-    // For left edge, restrict to white dots within vertical range of [blackMinY, blackMaxY].
-    const whiteLeftDots = whiteDots.filter(dot => dot.globalX < blackMinX &&
-                                                  dot.globalY >= blackMinY &&
-                                                  dot.globalY <= blackMaxY);
-    const leftLower = whiteLeftDots.length > 0 ? Math.max(...whiteLeftDots.map(dot => dot.globalX)) : 0;
+    // For left edge: consider white dots with x < blackMinX and y in [blackMinY, blackMaxY].
+    const whiteLeft = whiteDots.filter(dot =>
+      dot.globalX < blackMinX &&
+      dot.globalY >= blackMinY && dot.globalY <= blackMaxY
+    );
+    const leftLower = whiteLeft.length > 0 ? Math.max(...whiteLeft.map(dot => dot.globalX)) : 0;
     const leftUpper = blackMinX;
     
-    // For right edge, restrict to white dots within vertical range.
-    const whiteRightDots = whiteDots.filter(dot => dot.globalX > blackMaxX &&
-                                                   dot.globalY >= blackMinY &&
-                                                   dot.globalY <= blackMaxY);
+    // For right edge: white dots with x > blackMaxX and y in [blackMinY, blackMaxY].
+    const whiteRight = whiteDots.filter(dot =>
+      dot.globalX > blackMaxX &&
+      dot.globalY >= blackMinY && dot.globalY <= blackMaxY
+    );
     const rightLower = blackMaxX;
-    const rightUpper = whiteRightDots.length > 0 ? Math.min(...whiteRightDots.map(dot => dot.globalX)) : envSize;
+    const rightUpper = whiteRight.length > 0 ? Math.min(...whiteRight.map(dot => dot.globalX)) : envSize;
     
-    // For top edge, restrict to white dots within horizontal range of [blackMinX, blackMaxX].
-    const whiteTopDots = whiteDots.filter(dot => dot.globalY < blackMinY &&
-                                                 dot.globalX >= blackMinX &&
-                                                 dot.globalX <= blackMaxX);
-    const topLower = whiteTopDots.length > 0 ? Math.max(...whiteTopDots.map(dot => dot.globalY)) : 0;
+    // For top edge: white dots with y < blackMinY and x in [blackMinX, blackMaxX].
+    const whiteTop = whiteDots.filter(dot =>
+      dot.globalY < blackMinY &&
+      dot.globalX >= blackMinX && dot.globalX <= blackMaxX
+    );
+    const topLower = whiteTop.length > 0 ? Math.max(...whiteTop.map(dot => dot.globalY)) : 0;
     const topUpper = blackMinY;
     
-    // For bottom edge, restrict to white dots within horizontal range.
-    const whiteBottomDots = whiteDots.filter(dot => dot.globalY > blackMaxY &&
-                                                    dot.globalX >= blackMinX &&
-                                                    dot.globalX <= blackMaxX);
+    // For bottom edge: white dots with y > blackMaxY and x in [blackMinX, blackMaxX].
+    const whiteBottom = whiteDots.filter(dot =>
+      dot.globalY > blackMaxY &&
+      dot.globalX >= blackMinX && dot.globalX <= blackMaxX
+    );
     const bottomLower = blackMaxY;
-    const bottomUpper = whiteBottomDots.length > 0 ? Math.min(...whiteBottomDots.map(dot => dot.globalY)) : envSize;
+    const bottomUpper = whiteBottom.length > 0 ? Math.min(...whiteBottom.map(dot => dot.globalY)) : envSize;
     
-    // Sample candidate rectangles ensuring they cover the black dot bounding box.
+    // Now sample candidate boxes, but validate that they do not contain any white dot.
+    const maxAttempts = 20;
+    let candidatesFound = 0;
     for (let i = 0; i < 10; i++) {
-      const L = leftLower + Math.random() * (leftUpper - leftLower);
-      const R = rightLower + Math.random() * (rightUpper - rightLower);
-      const T = topLower + Math.random() * (topUpper - topLower);
-      const B = bottomLower + Math.random() * (bottomUpper - bottomLower);
-      candidateBoxes.push({ x: L, y: T, width: R - L, height: B - T });
+      let candidate;
+      let attempts = 0;
+      while (attempts < maxAttempts) {
+        const L = leftLower + Math.random() * (leftUpper - leftLower);
+        const R = rightLower + Math.random() * (rightUpper - rightLower);
+        const T = topLower + Math.random() * (topUpper - topLower);
+        const B = bottomLower + Math.random() * (bottomUpper - bottomLower);
+        candidate = { x: L, y: T, width: R - L, height: B - T };
+        // Check that candidate covers the black dot bounding box
+        if (candidate.x <= blackMinX &&
+            candidate.x + candidate.width >= blackMaxX &&
+            candidate.y <= blackMinY &&
+            candidate.y + candidate.height >= blackMaxY) {
+          // And candidate does not contain any white dot.
+          if (!containsWhite(candidate)) {
+            candidateBoxes.push(candidate);
+            candidatesFound++;
+            break;
+          }
+        }
+        attempts++;
+      }
     }
   } else {
-    // No black dots: fallback to sampling candidate rectangles anywhere.
+    // No black dots: fallback to sampling candidate rectangles anywhere,
+    // but ensure they do not contain any white dot.
+    const maxAttempts = 20;
     for (let i = 0; i < 10; i++) {
-      const L = Math.random() * (envSize - minSize);
-      const R = L + minSize + Math.random() * (envSize - L - minSize);
-      const T = Math.random() * (envSize - minSize);
-      const B = T + minSize + Math.random() * (envSize - T - minSize);
-      candidateBoxes.push({ x: L, y: T, width: R - L, height: B - T });
+      let candidate;
+      let attempts = 0;
+      while (attempts < maxAttempts) {
+        const L = Math.random() * (envSize - minSize);
+        const R = L + minSize + Math.random() * (envSize - L - minSize);
+        const T = Math.random() * (envSize - minSize);
+        const B = T + minSize + Math.random() * (envSize - T - minSize);
+        candidate = { x: L, y: T, width: R - L, height: B - T };
+        if (!containsWhite(candidate)) {
+          candidateBoxes.push(candidate);
+          break;
+        }
+        attempts++;
+      }
     }
   }
 }
