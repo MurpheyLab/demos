@@ -96,17 +96,17 @@
 <div class="slider-container">
   <div>
     <label for="camSizeSlider">Sensor Box Size:</label>
-    <input type="range" id="camSizeSlider" min="50" max="500" step="10" value="64">
+    <input type="range" id="camSizeSlider" min="16" max="640" step="4" value="64">
     <span id="camSizeValue">64</span>
   </div>
   <div>
     <label for="gridCountSlider">Number of Samples:</label>
-    <input type="range" id="gridCountSlider" min="4" max="36" step="1" value="4">
+    <input type="range" id="gridCountSlider" min="1" max="16" step="1" value="4">
     <span id="gridCountValue">4</span>
   </div>
   <div>
     <label for="sensorUncertaintySlider">Sensor Uncertainty:</label>
-    <input type="range" id="sensorUncertaintySlider" min="0" max="1" step="0.1" value="0.5">
+    <input type="range" id="sensorUncertaintySlider" min="0.0" max="1.0" step="0.1" value="0.5">
     <span id="sensorUncertaintyValue">0.5</span>
   </div>
 </div>
@@ -246,8 +246,8 @@ function updateCameraView() {
   cameraX += (targetX - cameraX) * trackingSpeed;
   cameraY += (targetY - cameraY) * trackingSpeed;
 
-  camX = Math.max(0, Math.min(envSize - camSize, cameraX - camSize / 2));
-  camY = Math.max(0, Math.min(envSize - camSize, cameraY - camSize / 2));
+  camX = Math.max(0, Math.min(envSize - camSize - 5, cameraX - camSize / 2));
+  camY = Math.max(0, Math.min(envSize - camSize - 5, cameraY - camSize / 2));
 
   cameraCanvas.width = camSize;
   cameraCanvas.height = camSize;
