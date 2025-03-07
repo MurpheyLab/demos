@@ -247,6 +247,17 @@
             targetX = mouseX;
             targetY = mouseY;
         });
+
+        document.getElementById("env-container").addEventListener("touchmove", (event) => {
+            // Prevent default scrolling behavior on mobile devices.
+            event.preventDefault();
+            const rect = document.getElementById("env-container").getBoundingClientRect();
+            const touch = event.touches[0];
+            const touchX = touch.clientX - rect.left;
+            const touchY = touch.clientY - rect.top;
+            targetX = touchX;
+            targetY = touchY;
+        }, { passive: false });
         
         randomizeButton.addEventListener("click", () => {
             previousShowGlobalView = showGlobalView;
