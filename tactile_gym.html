@@ -1,3 +1,9 @@
+<!-- 
+    Author: Max Muchen Sun (msun@u.northwestern.edu)
+    Date: 2025-03-06
+    Description: Tactile Sensing Playground
+-->
+
 <!DOCTYPE html>
 <html>
 <head>
@@ -76,7 +82,8 @@
     </div>
     <div>
         <label for="gridCountSlider">Receptor Density:</label>
-        <input type="range" id="gridCountSlider" min="2" max="8" step="1" value="4">
+        <!-- Changed min from "2" to "1" -->
+        <input type="range" id="gridCountSlider" min="1" max="8" step="1" value="4">
         <span id="gridCountValue">4</span>
     </div>
 </div>
@@ -184,65 +191,84 @@ function drawRotatedTriangle(ctx, x, y, size, angle, fillColor) {
 }
 
 // --------------------------------------------------------------------------------
-// Point-in-shape checks
+// Point-in-shape checks and collision detection for receptors (dots)
 // --------------------------------------------------------------------------------
-function isInsideSquare(px, py, shape) {
+
+// For square: check if a circle (center, radius) intersects a rotated square.
+function intersectsSquare(circleX, circleY, r, shape) {
   const centerX = shape.x + shape.size / 2;
   const centerY = shape.y + shape.size / 2;
-
-  let dx = px - centerX;
-  let dy = py - centerY;
-
+  let dx = circleX - centerX;
+  let dy = circleY - centerY;
   let cosA = Math.cos(-shape.angle);
   let sinA = Math.sin(-shape.angle);
-
   let rx = dx * cosA - dy * sinA;
   let ry = dx * sinA + dy * cosA;
-
   let half = shape.size / 2;
-  return (rx >= -half && rx <= half && ry >= -half && ry <= half);
+  // Find the closest point on the square to the circle center.
+  let closestX = Math.max(-half, Math.min(rx, half));
+  let closestY = Math.max(-half, Math.min(ry, half));
+  let diffX = rx - closestX;
+  let diffY = ry - closestY;
+  return (diffX * diffX + diffY * diffY) <= r * r;
 }
 
-function isInsideTriangle(px, py, shape) {
+// Helper for triangle collision detection.
+function pointInTriangle(px, py, x1, y1, x2, y2, x3, y3) {
+  let areaOrig = Math.abs((x2 - x1) * (y3 - y1) - (x3 - x1) * (y2 - y1));
+  let area1 = Math.abs((x1 - px) * (y2 - py) - (x2 - px) * (y1 - py));
+  let area2 = Math.abs((x2 - px) * (y3 - py) - (x3 - px) * (y2 - py));
+  let area3 = Math.abs((x3 - px) * (y1 - py) - (x1 - px) * (y3 - py));
+  return Math.abs(area1 + area2 + area3 - areaOrig) < 0.01;
+}
+
+function distancePointToSegment(px, py, x1, y1, x2, y2) {
+  let l2 = (x2 - x1) ** 2 + (y2 - y1) ** 2;
+  if (l2 === 0) return Math.hypot(px - x1, py - y1);
+  let t = ((px - x1) * (x2 - x1) + (py - y1) * (y2 - y1)) / l2;
+  t = Math.max(0, Math.min(1, t));
+  let projX = x1 + t * (x2 - x1);
+  let projY = y1 + t * (y2 - y1);
+  return Math.hypot(px - projX, py - projY);
+}
+
+function intersectsTriangle(circleX, circleY, r, shape) {
   const centerX = shape.x + shape.size / 2;
   const centerY = shape.y + shape.size / 2;
-
-  let dx = px - centerX;
-  let dy = py - centerY;
-
+  let dx = circleX - centerX;
+  let dy = circleY - centerY;
   let cosA = Math.cos(-shape.angle);
   let sinA = Math.sin(-shape.angle);
-
   let rx = dx * cosA - dy * sinA;
   let ry = dx * sinA + dy * cosA;
-
   let half = shape.size / 2;
-
-  let areaABC = triangleArea(-half, half, half, half, 0, -half);
-  let areaPAB = triangleArea(rx, ry, -half, half, half, half);
-  let areaPBC = triangleArea(rx, ry, half, half, 0, -half);
-  let areaPCA = triangleArea(rx, ry, 0, -half, -half, half);
-
-  let total = areaPAB + areaPBC + areaPCA;
-  return Math.abs(total - areaABC) < 0.01;
+  // Define triangle vertices as used in drawRotatedTriangle.
+  let A = { x: -half, y: half };
+  let B = { x: half, y: half };
+  let C = { x: 0, y: -half };
+  // Check if circle center is inside the triangle.
+  if (pointInTriangle(rx, ry, A.x, A.y, B.x, B.y, C.x, C.y)) return true;
+  // Otherwise, check the distance from circle center to each edge.
+  if (distancePointToSegment(rx, ry, A.x, A.y, B.x, B.y) <= r) return true;
+  if (distancePointToSegment(rx, ry, B.x, B.y, C.x, C.y) <= r) return true;
+  if (distancePointToSegment(rx, ry, C.x, C.y, A.x, A.y) <= r) return true;
+  return false;
 }
 
-function triangleArea(x1, y1, x2, y2, x3, y3) {
-  return Math.abs(x1*(y2 - y3) + x2*(y3 - y1) + x3*(y1 - y2)) / 2;
+// For circle shapes, check if the receptor circle intersects the shape's circle.
+function intersectsCircle(circleX, circleY, r, shape) {
+  let dx = circleX - shape.x;
+  let dy = circleY - shape.y;
+  let dist = Math.sqrt(dx * dx + dy * dy);
+  return dist <= (shape.radius + r);
 }
 
-function isInsideCircle(px, py, shape) {
-  let dx = px - shape.x;
-  let dy = py - shape.y;
-  let distSq = dx*dx + dy*dy;
-  return distSq <= shape.radius * shape.radius;
-}
-
-function getShapeAt(px, py) {
+// Modified getShapeAt: returns the shape if the receptor circle (center, radius) intersects it.
+function getShapeAt(px, py, dotRadius) {
   for (let s of shapes) {
-    if (s.type === "square" && isInsideSquare(px, py, s)) return s;
-    if (s.type === "triangle" && isInsideTriangle(px, py, s)) return s;
-    if (s.type === "circle" && isInsideCircle(px, py, s)) return s;
+    if (s.type === "square" && intersectsSquare(px, py, dotRadius, s)) return s;
+    if (s.type === "triangle" && intersectsTriangle(px, py, dotRadius, s)) return s;
+    if (s.type === "circle" && intersectsCircle(px, py, dotRadius, s)) return s;
   }
   return null;
 }
@@ -354,14 +380,18 @@ function colorMap(value) {
   return `rgb(${shade},${shade},${shade})`;
 }
 
+// Modified drawCameraGridDots function.
+// The dot's diameter is equal to the grid cell size so that the dots always fill the sensor box.
+// Also, getShapeAt now checks if any part of the dot (circle) intersects a shape.
 function drawCameraGridDots(dt) {
   if (dt <= 0) dt = 0.016;
-  const dotRadius = 4;
+  const cellSize = camSize / gridCount;
+  const dotRadius = cellSize / 2;
 
   for (let i = 0; i < gridCount; i++) {
     for (let j = 0; j < gridCount; j++) {
-      let localX = (i + 0.5) * (camSize / gridCount);
-      let localY = (j + 0.5) * (camSize / gridCount);
+      let localX = (i + 0.5) * cellSize;
+      let localY = (j + 0.5) * cellSize;
 
       let globalX = camX + localX;
       let globalY = camY + localY;
@@ -370,10 +400,11 @@ function drawCameraGridDots(dt) {
       let oldY = previousPositions[i][j].y;
       let dx = globalX - oldX;
       let dy = globalY - oldY;
-      let distance = Math.sqrt(dx*dx + dy*dy);
+      let distance = Math.sqrt(dx * dx + dy * dy);
       let velocity = distance / dt;
 
-      let shape = getShapeAt(globalX, globalY);
+      // Pass dotRadius so the collision functions check for any overlap.
+      let shape = getShapeAt(globalX, globalY, dotRadius);
       let coeff = shape ? shape.coefficient : backgroundCoeff;
 
       let reading = velocity * coeff;
@@ -386,7 +417,7 @@ function drawCameraGridDots(dt) {
       cameraCtx.strokeStyle = "black";
       cameraCtx.stroke();
 
-      // Update previous position
+      // Update previous position.
       previousPositions[i][j].x = globalX;
       previousPositions[i][j].y = globalY;
     }
@@ -449,7 +480,7 @@ document.getElementById("env-container").addEventListener("mousemove", (event) =
 randomizeButton.addEventListener("click", () => {
   // Generate new environment into offscreenCanvas
   drawEnvironment(offscreenCtx);
-  // Show it on the main canvas (assuming background is true or false)
+  // Show it on the main canvas (depending on toggle)
   refreshMainCanvas();
 
   // Re-center camera so it starts in the middle
@@ -491,7 +522,7 @@ toggleBgButton.addEventListener("click", () => {
   // Refresh main canvas to show/hide environment
   refreshMainCanvas();
 
-  // Camera will update on next animation frame, but let's do it now:
+  // Update camera view immediately:
   updateCameraView(0);
 });
 
