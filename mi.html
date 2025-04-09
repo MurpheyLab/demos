@@ -103,9 +103,9 @@
                     <th>I(x)</th>
                     <th>x</th>
                     <th>p(y=1|x)</th>
-                    <th>H(p(x)) - H(p(x|y=1))</th>
+                    <th>H(p(s)) - H(p(s|x,y=1))</th>
                     <th>p(y=0|x)</th>
-                    <th>H(p(x)) - H(p(x|y=0))</th>
+                    <th>H(p(s)) - H(p(s|x,y=0))</th>
                 </tr>
             </thead>
             <tbody>
@@ -182,6 +182,7 @@
         const tdDiff1 = document.getElementById("tdDiff1");
         const tdPy0 = document.getElementById("tdPy0");
         const tdDiff0 = document.getElementById("tdDiff0");
+        const tdX = document.getElementById("tdX");
 
         // Progress elements
         const miProgressBar = document.getElementById("miProgress");
@@ -199,7 +200,6 @@
         /********************************************************************
          * PART 2: Helper Functions
          ********************************************************************/
-
         // Sum-based normalization helper function
         function normalizeBySum(array) {
             const sumVal = array.reduce((a, b) => a + b, 0);
@@ -273,7 +273,8 @@
         function computeDensityFieldImageData(res) {
             const w = res, h = res;
             const off = document.createElement("canvas");
-            off.width = w; off.height = h;
+            off.width = w;
+            off.height = h;
             const oc = off.getContext("2d");
             const imageData = oc.createImageData(w, h);
             const data = imageData.data;
@@ -378,7 +379,7 @@
         }
 
         /********************************************************************
-         * PART 5: Button and Mouse Events
+         * PART 5: Button and Mouse Events + Touch Support for Square4
          ********************************************************************/
         const errorMessageDiv = document.createElement("div");
         errorMessageDiv.style.color = "red";
@@ -406,12 +407,61 @@
             miInfo.innerText = "Progress: 0% | 0 iters/sec | Time left: – s";
             miStartTime = performance.now();
             const off = document.createElement("canvas");
-            off.width = gridRes; off.height = gridRes;
+            off.width = gridRes;
+            off.height = gridRes;
             const oc = off.getContext("2d");
             miFieldData = oc.createImageData(gridRes, gridRes);
             animateMI();
         });
 
+        // Helper function to extract event coordinates (mouse or touch)
+        function getEventCoordinates(e, canvas) {
+            let clientX, clientY;
+            if (e.changedTouches) {
+                clientX = e.changedTouches[0].clientX;
+                clientY = e.changedTouches[0].clientY;
+            } else {
+                clientX = e.clientX;
+                clientY = e.clientY;
+            }
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            return {
+                x: (clientX - rect.left) * scaleX,
+                y: (clientY - rect.top) * scaleY
+            };
+        }
+
+        // Shared function for handling a tap/click on square4
+        function handleBeliefTap(e, canvas) {
+            e.preventDefault();
+            const coords = getEventCoordinates(e, canvas);
+            const m = { x: coords.x / canvas.width, y: 1 - (coords.y / canvas.height) };
+
+            const dx_true = m.x - hiddenTarget.x;
+            const dy_true = m.y - hiddenTarget.y;
+            const d_true = Math.hypot(dx_true, dy_true);
+            const p_meas = Math.exp(-100 * ((d_true - 0.2) ** 2));
+            const outcome = (Math.random() < p_meas) ? 1 : 0;
+            sampledDot = { x: m.x, y: m.y, color: (outcome === 1) ? "red" : "white" };
+
+            // Update beliefMatrix using measurement likelihood.
+            for (let j = 0; j < gridRes; j++) {
+                for (let i = 0; i < gridRes; i++) {
+                    const idx = j * gridRes + i;
+                    const s_x = i / gridRes, s_y = 1 - (j / gridRes);
+                    const dd = Math.hypot(m.x - s_x, m.y - s_y);
+                    const L = Math.max(Math.exp(-100 * ((dd - 0.2) ** 2)), 1e-6);
+                    const likelihood = (outcome === 1) ? L : Math.max(1 - L, 1e-6);
+                    beliefMatrix[idx] *= likelihood;
+                }
+            }
+            normalizeBySum(beliefMatrix);
+            beliefFieldData = createVisualizationImage(beliefMatrix);
+        }
+
+        // Mouse event listeners for all canvases for hover tracking.
         canvases.forEach(canvas => {
             canvas.addEventListener("mousemove", (e) => {
                 const rect = canvas.getBoundingClientRect();
@@ -430,44 +480,30 @@
             });
         });
 
-        // Square4: Click events for Bayesian update
+        // For square4 (iterative belief) add both mouse click and touch support.
         let sampledDot = null;
         canvases.forEach(canvas => {
             if (canvas.dataset.id === "square4") {
                 canvas.addEventListener("click", (e) => {
-                    const rect = canvas.getBoundingClientRect();
-                    const scaleX = canvas.width / rect.width;
-                    const scaleY = canvas.height / rect.height;
-                    const clickX = (e.clientX - rect.left) * scaleX;
-                    const clickY = (e.clientY - rect.top) * scaleY;
-                    const m = { x: clickX / canvas.width, y: 1 - (clickY / canvas.height) };
-
-                    const dx_true = m.x - hiddenTarget.x;
-                    const dy_true = m.y - hiddenTarget.y;
-                    const d_true = Math.hypot(dx_true, dy_true);
-                    const p_meas = Math.exp(-100 * ((d_true - 0.2) ** 2));
-                    const outcome = (Math.random() < p_meas) ? 1 : 0;
-                    sampledDot = { x: m.x, y: m.y, color: (outcome === 1) ? "red" : "white" };
-
-                    // Update beliefMatrix using the measurement likelihood,
-                    // and normalize using the sum.
-                    for (let j = 0; j < gridRes; j++) {
-                        for (let i = 0; i < gridRes; i++) {
-                            const idx = j * gridRes + i;
-                            const s_x = i / gridRes, s_y = 1 - (j / gridRes);
-                            const dd = Math.hypot(m.x - s_x, m.y - s_y);
-                            // Cap the likelihood to be at least 1e-6.
-                            const L = Math.max(Math.exp(-100 * ((dd - 0.2) ** 2)), 1e-6);
-                            // For the negative hypothesis, also cap 1 - L.
-                            const likelihood = (outcome === 1) ? L : Math.max(1 - L, 1e-6);
-                            beliefMatrix[idx] *= likelihood;
-                        }
-                    }
-                    normalizeBySum(beliefMatrix);
-
-                    // Build beliefFieldData for visualization using our min-max function:
-                    beliefFieldData = createVisualizationImage(beliefMatrix);
+                    handleBeliefTap(e, canvas);
                 });
+                // Touch events for square4.
+                canvas.addEventListener("touchstart", (e) => {
+                    e.preventDefault();
+                    const coords = getEventCoordinates(e, canvas);
+                    dot.target.x = coords.x / canvas.width;
+                    dot.target.y = 1 - (coords.y / canvas.height);
+                    dot.visible = true;
+                }, false);
+                canvas.addEventListener("touchmove", (e) => {
+                    e.preventDefault();
+                    const coords = getEventCoordinates(e, canvas);
+                    dot.target.x = coords.x / canvas.width;
+                    dot.target.y = 1 - (coords.y / canvas.height);
+                }, false);
+                canvas.addEventListener("touchend", (e) => {
+                    handleBeliefTap(e, canvas);
+                }, false);
             }
         });
 
@@ -483,17 +519,14 @@
                 for (let i = 0; i < totalCells; i++) {
                     normBelief[i] = beliefMatrix[i] / sumBelief;
                 }
-                // The prior entropy is constant (for this iteration) computed using the current normalized belief.
                 const priorEntropy = distributionEntropy(normBelief);
 
                 // Process a batch of cells
                 for (let n = 0; n < miBatchSize && miComputationIndex < w * h; n++, miComputationIndex++) {
                     const i = miComputationIndex % w;
                     const j = Math.floor(miComputationIndex / w);
-                    // Candidate measurement location corresponding to this grid cell.
                     const xCand = { x: i / w, y: 1 - (j / h) };
 
-                    // Compute p(y=1) for candidate xCand.
                     let p_y1 = 0;
                     for (let k = 0; k < totalCells; k++) {
                         const s = candidatePositions[k];
@@ -502,7 +535,6 @@
                     }
                     const p_y0 = 1 - p_y1;
 
-                    // Compute hypothetical posterior for outcome y=1.
                     let postY1 = new Array(totalCells);
                     for (let k = 0; k < totalCells; k++) {
                         const s = candidatePositions[k];
@@ -512,7 +544,6 @@
                     normalizeBySum(postY1);
                     const H_postY1 = distributionEntropy(postY1);
 
-                    // Compute hypothetical posterior for outcome y=0.
                     let postY0 = new Array(totalCells);
                     for (let k = 0; k < totalCells; k++) {
                         const s = candidatePositions[k];
@@ -522,11 +553,7 @@
                     normalizeBySum(postY0);
                     const H_postY0 = distributionEntropy(postY0);
 
-                    // Now, using the table’s formula for mutual information:
                     const I_x = (priorEntropy - (p_y1 * H_postY1 + p_y0 * H_postY0)) * 255.0;
-                    // console.log('I_x: ', I_x)
-
-                    // Store the computed MI value in the raw MI buffer. Save it into each RGB channel.
                     const dIndex = miComputationIndex * 4;
                     miFieldData.data[dIndex] = I_x;
                     miFieldData.data[dIndex + 1] = I_x;
@@ -534,7 +561,6 @@
                     miFieldData.data[dIndex + 3] = 255;
                 }
 
-                // Update progress indicator
                 const progressPercent = (miComputationIndex / (w * h)) * 100;
                 miProgressBar.value = progressPercent;
                 const elapsed = (performance.now() - miStartTime) / 1000;
@@ -542,17 +568,13 @@
                 const timeLeft = ((w * h) - miComputationIndex) / itersPerSec;
                 miInfo.innerText = `Progress: ${progressPercent.toFixed(1)}% | ${itersPerSec.toFixed(1)} iters/sec | Time left: ${timeLeft.toFixed(1)} s`;
 
-                // Continue computing in the next animation frame.
                 requestAnimationFrame(animateMI);
             } else {
-                // When all grid cells have been processed, adjust the MI field’s color intensity.
-                // Extract the raw MI values from the red channel.
                 const rawMI = new Array(totalCells);
                 for (let i = 0; i < totalCells; i++) {
                     rawMI[i] = miFieldData.data[i * 4];
                     console.log('rawMI[', i, "]: ", rawMI[i])
                 }
-                // Create a visualization image that scales the colormap to the min and max MI values.
                 miFieldData = createVisualizationImage(rawMI);
                 showMIField = true;
             }
@@ -568,9 +590,9 @@
                 tdDiff1.textContent = "???";
                 tdPy0.textContent = "???";
                 tdDiff0.textContent = "???";
+                tdX.textContent = "???";
                 return;
             }
-            // Normalize beliefMatrix by sum
             const sumBelief = beliefMatrix.reduce((a, b) => a + b, 0);
             if (sumBelief <= 0) {
                 tdIx.textContent = "NaN";
@@ -578,18 +600,14 @@
                 tdDiff1.textContent = "NaN";
                 tdPy0.textContent = "NaN";
                 tdDiff0.textContent = "NaN";
+                tdX.textContent = "NaN";
                 return;
             }
             const normBelief = new Array(totalCells);
             for (let i = 0; i < totalCells; i++) {
                 normBelief[i] = beliefMatrix[i] / sumBelief;
             }
-            // console.log("Normalized belief sum:", normBelief.reduce((a, b) => a + b, 0), normBelief.reduce((a, b) => Math.max(a, b), -Infinity), normBelief.reduce((a, b) => Math.min(a, b), Infinity));
-            // Current mouse position (from dot.pos)
             const mx = dot.pos.x, my = dot.pos.y;
-            console.log("mx: ", mx, ", my: ", my);
-
-            // p(y=1) using the measurement likelihood at the current mouse position
             let p_y1 = 0;
             for (let i = 0; i < totalCells; i++) {
                 const s = candidatePositions[i];
@@ -597,11 +615,8 @@
                 p_y1 += normBelief[i] * L;
             }
             const p_y0 = 1 - p_y1;
-
-            // Prior entropy: H(p(x))
             const priorEntropy = distributionEntropy(normBelief);
 
-            // Hypothetical posterior if y=1:
             let postY1 = new Array(totalCells);
             for (let i = 0; i < totalCells; i++) {
                 const s = candidatePositions[i];
@@ -611,7 +626,6 @@
             normalizeBySum(postY1);
             const H_postY1 = distributionEntropy(postY1);
 
-            // Hypothetical posterior if y=0:
             let postY0 = new Array(totalCells);
             for (let i = 0; i < totalCells; i++) {
                 const s = candidatePositions[i];
@@ -626,8 +640,7 @@
             const Ix = priorEntropy - (p_y1 * H_postY1 + p_y0 * H_postY0);
 
             tdIx.textContent = Ix.toFixed(3);
-            document.getElementById("tdX").textContent =
-                `(${dot.pos.x.toFixed(2)}, ${dot.pos.y.toFixed(2)})`;
+            tdX.textContent = `(${dot.pos.x.toFixed(2)}, ${dot.pos.y.toFixed(2)})`;
             tdPy1.textContent = p_y1.toFixed(3);
             tdDiff1.textContent = diff1.toFixed(3);
             tdPy0.textContent = p_y0.toFixed(3);
@@ -643,7 +656,6 @@
             canvases.forEach(canvas => {
                 const ctx = canvas.getContext("2d");
                 if (canvas.dataset.id === "square3") {
-                    // For square3 (density field): draw the density field and fixed marker...
                     if (densityFieldData) {
                         const rawDensity = new Array(gridRes * gridRes);
                         for (let i = 0; i < rawDensity.length; i++) {
@@ -652,9 +664,8 @@
                         const visImg = createVisualizationImage(rawDensity);
                         drawScaledImageData(ctx, visImg, canvas.width, canvas.height);
                     }
-                    // Draw the fixed triangle marker at center.
                     drawTriangleMarker(ctx, 0.5, 0.5, 60, canvas.height);
-                    // DRAW MOUSE TRACKER IN SQUARE3: always grey.
+                    // Draw tracker marker in square3 (always grey)
                     const trackerX = dot.pos.x * canvas.width;
                     const trackerY = canvas.height - (dot.pos.y * canvas.height);
                     ctx.beginPath();
@@ -664,13 +675,7 @@
                     ctx.lineWidth = 2;
                     ctx.strokeStyle = "black";
                     ctx.stroke();
-                    // ctx.font = "16px sans-serif";
-                    // ctx.fillStyle = "black";
-                    // ctx.textBaseline = "middle";
-                    // ctx.fillText(`(${dot.pos.x.toFixed(2)}, ${dot.pos.y.toFixed(2)})`, trackerX + 15, trackerY);
-                }
-                else if (canvas.dataset.id === "square4") {
-                    // For square4 (iterative belief): visualize the belief field.
+                } else if (canvas.dataset.id === "square4") {
                     if (beliefMatrix) {
                         const visImg = createVisualizationImage(beliefMatrix);
                         drawScaledImageData(ctx, visImg, canvas.width, canvas.height);
@@ -681,7 +686,6 @@
                     if (showHiddenTarget) {
                         drawTriangleMarker(ctx, hiddenTarget.x, hiddenTarget.y, 60, canvas.height);
                     }
-                    // Draw the measurement sample marker if one exists.
                     if (sampledDot) {
                         const sampleX = sampledDot.x * canvas.width;
                         const sampleY = canvas.height - (sampledDot.y * canvas.height);
@@ -693,8 +697,7 @@
                         ctx.strokeStyle = "black";
                         ctx.stroke();
                     }
-                    // DRAW MOUSE TRACKER IN SQUARE4:
-                    // Use the measurement color (red/white) if a measurement has been taken, otherwise default to white.
+                    // Draw tracker marker in square4; use measurement color if available, otherwise white.
                     const trackerX = dot.pos.x * canvas.width;
                     const trackerY = canvas.height - (dot.pos.y * canvas.height);
                     ctx.beginPath();
@@ -705,13 +708,7 @@
                     ctx.lineWidth = 2;
                     ctx.strokeStyle = "black";
                     ctx.stroke();
-                    ctx.font = "16px sans-serif";
-                    ctx.fillStyle = "black";
-                    ctx.textBaseline = "middle";
-                    ctx.fillText(`(${dot.pos.x.toFixed(2)}, ${dot.pos.y.toFixed(2)})`, trackerX + 15, trackerY);
-                }
-                else if (canvas.dataset.id === "square5") {
-                    // For square5 (MI field): visualize using MI field data if computed.
+                } else if (canvas.dataset.id === "square5") {
                     if (showMIField && miFieldData) {
                         const rawMI = new Array(totalCells);
                         for (let i = 0; i < totalCells; i++) {
@@ -723,7 +720,7 @@
                         ctx.fillStyle = "white";
                         ctx.fillRect(0, 0, canvas.width, canvas.height);
                     }
-                    // DRAW MOUSE TRACKER IN SQUARE5: always grey.
+                    // Draw tracker marker in square5 (always grey)
                     const trackerX = dot.pos.x * canvas.width;
                     const trackerY = canvas.height - (dot.pos.y * canvas.height);
                     ctx.beginPath();
@@ -733,13 +730,8 @@
                     ctx.lineWidth = 2;
                     ctx.strokeStyle = "black";
                     ctx.stroke();
-                    ctx.font = "16px sans-serif";
-                    ctx.fillStyle = "black";
-                    ctx.textBaseline = "middle";
-                    ctx.fillText(`(${dot.pos.x.toFixed(2)}, ${dot.pos.y.toFixed(2)})`, trackerX + 15, trackerY);
                 }
-                // For top row squares (square1 and square2: hypothetical posteriors),
-                // your existing code draws the tracker marker, so we leave those unchanged.
+                // For squares 1 and 2 (top row hypothetical posteriors):
                 if (canvas.dataset.id === "square1" || canvas.dataset.id === "square2") {
                     let hypoBelief = new Array(totalCells).fill(0);
                     let maxValHypo = -Infinity;
@@ -763,7 +755,6 @@
                     normalizeBySum(hypoBelief);
                     const visImg = createVisualizationImage(hypoBelief);
                     drawScaledImageData(ctx, visImg, canvas.width, canvas.height);
-                    // Draw tracker marker using the prior method for top squares.
                     const trackerX = dot.pos.x * canvas.width;
                     const trackerY = canvas.height - (dot.pos.y * canvas.height);
                     ctx.beginPath();
@@ -773,14 +764,10 @@
                     ctx.lineWidth = 2;
                     ctx.strokeStyle = "black";
                     ctx.stroke();
-                    ctx.font = "16px sans-serif";
-                    ctx.fillStyle = "black";
-                    ctx.textBaseline = "middle";
-                    ctx.fillText(`(${dot.pos.x.toFixed(2)}, ${dot.pos.y.toFixed(2)})`, trackerX + 15, trackerY);
                 }
             });
 
-            // Update mouse tracker velocity.
+            // Update the tracker velocity.
             const diffX = dot.target.x - dot.pos.x;
             const diffY = dot.target.y - dot.pos.y;
             let vx = diffX * velocityFactor, vy = diffY * velocityFactor;
@@ -794,7 +781,6 @@
 
             requestAnimationFrame(animate);
         }
-
 
         /********************************************************************
          * PART 9: Start the Main Loop
