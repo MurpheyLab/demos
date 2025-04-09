@@ -1,0 +1,806 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Iterative Belief Update with Individual Color Scaling</title>
+    <!-- MathJax is included if needed elsewhere but not for numeric table updates -->
+    <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <style>
+        /* Basic styling */
+        body {
+            margin: 0;
+            font-family: sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+            padding: 20px;
+        }
+
+        /* Container for the top table */
+        #topRowContainer {
+            width: 1120px;
+            /* same as 3 squares: 360×3 + 2×20 = 1120 */
+            margin: 0 auto;
+            text-align: center;
+            padding: 10px;
+        }
+
+        #expressionTable {
+            margin: 0 auto;
+            border-collapse: collapse;
+        }
+
+        #expressionTable th,
+        #expressionTable td {
+            border: 1px solid #ccc;
+            padding: 8px 12px;
+        }
+
+        #expressionTable th {
+            background: #f7f7f7;
+            font-weight: bold;
+        }
+
+        .row {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            width: 100%;
+        }
+
+        .square-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .title {
+            font-size: 18px;
+        }
+
+        canvas {
+            border: 1px solid #ccc;
+            width: 360px;
+            height: 360px;
+            image-rendering: pixelated;
+        }
+
+        .button-row {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            width: 100%;
+        }
+
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+
+        #miProgress {
+            width: 360px;
+            height: 20px;
+        }
+
+        #miInfo {
+            font-size: 14px;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+
+<body>
+    <!-- Top table for the expression values -->
+    <div id="topRowContainer">
+        <table id="expressionTable">
+            <thead>
+                <tr>
+                    <th>I(x)</th>
+                    <th>x</th>
+                    <th>p(y=1|x)</th>
+                    <th>H(p(x)) - H(p(x|y=1))</th>
+                    <th>p(y=0|x)</th>
+                    <th>H(p(x)) - H(p(x|y=0))</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td id="tdIx">???</td>
+                    <td id="tdX">???</td>
+                    <td id="tdPy1">???</td>
+                    <td id="tdDiff1">???</td>
+                    <td id="tdPy0">???</td>
+                    <td id="tdDiff0">???</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Top row of squares -->
+    <div class="row" id="row1">
+        <div class="square-container">
+            <div class="title">\( p(s \mid y=1) \)</div>
+            <canvas data-id="square1" width="360" height="360"></canvas>
+        </div>
+        <div class="square-container">
+            <div class="title">\( p(s \mid y=0) \)</div>
+            <canvas data-id="square2" width="360" height="360"></canvas>
+        </div>
+    </div>
+
+    <!-- Bottom row: density field, iterative belief, MI field -->
+    <div class="row" id="row2">
+        <div class="square-container">
+            <div class="title">\( p(y=1 \mid s=[0.5,0.5],\, x) \)</div>
+            <canvas data-id="square3" width="360" height="360"></canvas>
+        </div>
+        <div class="square-container">
+            <div class="title">Iterative Belief \( p(s) \)</div>
+            <canvas data-id="square4" width="360" height="360"></canvas>
+        </div>
+        <div class="square-container">
+            <div class="title">\( I(x) \)</div>
+            <canvas data-id="square5" width="360" height="360"></canvas>
+        </div>
+    </div>
+
+    <!-- Button row -->
+    <div class="button-row">
+        <button id="resetButton">Reset</button>
+        <button id="toggleTargetButton">Show Target</button>
+        <button id="visualizeMIButton">Visualize Mutual Information</button>
+    </div>
+
+    <!-- MI Progress -->
+    <progress id="miProgress" value="0" max="100"></progress>
+    <div id="miInfo">Progress: 0% | 0 iters/sec | Time left: – s</div>
+
+    <script>
+        /********************************************************************
+         * PART 1: Global Variables, Belief, and Tracker State.
+         ********************************************************************/
+        const gridRes = 50;
+        const totalCells = gridRes * gridRes;
+        const miBatchSize = 10;
+        let beliefMatrix = null;
+        let beliefFieldData = null;   // Not used for underlying value—only for display if needed
+        let hiddenTarget = { x: Math.random() * 0.6 + 0.2, y: Math.random() * 0.6 + 0.2 };
+        let showHiddenTarget = false;
+        let miFieldData = null;
+        let miComputationIndex = 0;
+        let showMIField = false;
+        let miStartTime = 0;
+
+        // Table cells for our values
+        const tdIx = document.getElementById("tdIx");
+        const tdPy1 = document.getElementById("tdPy1");
+        const tdDiff1 = document.getElementById("tdDiff1");
+        const tdPy0 = document.getElementById("tdPy0");
+        const tdDiff0 = document.getElementById("tdDiff0");
+
+        // Progress elements
+        const miProgressBar = document.getElementById("miProgress");
+        const miInfo = document.getElementById("miInfo");
+
+        // Buttons
+        const resetButton = document.getElementById("resetButton");
+        const toggleTargetButton = document.getElementById("toggleTargetButton");
+        const visualizeMIButton = document.getElementById("visualizeMIButton");
+
+        // Tracker for mouse position etc.
+        const dot = { pos: { x: 0, y: 0 }, target: { x: 0, y: 0 }, visible: false };
+        const velocityFactor = 0.15, maxVelocity = 0.05;
+
+        /********************************************************************
+         * PART 2: Helper Functions
+         ********************************************************************/
+
+        // Sum-based normalization helper function
+        function normalizeBySum(array) {
+            const sumVal = array.reduce((a, b) => a + b, 0);
+            if (sumVal > 0) {
+                for (let i = 0; i < array.length; i++) {
+                    array[i] /= sumVal;
+                }
+            } else {
+                const val = 1 / array.length;
+                for (let i = 0; i < array.length; i++) {
+                    array[i] = val;
+                }
+            }
+        }
+
+        // Create a visualization ImageData from a 1D data array using min-max normalization.
+        // This adjusts the color intensity for display purposes without changing the underlying data.
+        function createVisualizationImage(dataArray) {
+            let minVal = Infinity, maxVal = -Infinity;
+            for (let i = 0; i < dataArray.length; i++) {
+                if (dataArray[i] < minVal) minVal = dataArray[i];
+                if (dataArray[i] > maxVal) maxVal = dataArray[i];
+            }
+            const range = (maxVal - minVal) > 0 ? (maxVal - minVal) : 1;
+            // Create an ImageData object to draw on a offscreen canvas of size gridRes x gridRes.
+            const off = document.createElement("canvas");
+            off.width = gridRes;
+            off.height = gridRes;
+            const ctx = off.getContext("2d");
+            let imgData = ctx.createImageData(gridRes, gridRes);
+            for (let i = 0; i < dataArray.length; i++) {
+                // Normalize to [0,1]
+                let normVal = (dataArray[i] - minVal) / range;
+                // Clamp just in case
+                normVal = Math.min(Math.max(normVal, 0), 1);
+                const c = plasmaColor(normVal);
+                let idx = i * 4;
+                imgData.data[idx] = c.r;
+                imgData.data[idx + 1] = c.g;
+                imgData.data[idx + 2] = c.b;
+                imgData.data[idx + 3] = 255;
+            }
+            return imgData;
+        }
+
+        // Plasma colormap function
+        function plasmaColor(t) {
+            const cp = [
+                { t: 0.0, r: 13, g: 8, b: 135 },
+                { t: 0.25, r: 84, g: 28, b: 154 },
+                { t: 0.5, r: 186, g: 66, b: 124 },
+                { t: 0.75, r: 249, g: 136, b: 77 },
+                { t: 1.0, r: 240, g: 249, b: 33 }
+            ];
+            if (t <= cp[0].t) return cp[0];
+            if (t >= cp[cp.length - 1].t) return cp[cp.length - 1];
+            for (let i = 0; i < cp.length - 1; i++) {
+                if (t >= cp[i].t && t <= cp[i + 1].t) {
+                    const f = (t - cp[i].t) / (cp[i + 1].t - cp[i].t);
+                    return {
+                        r: Math.round(cp[i].r + f * (cp[i + 1].r - cp[i].r)),
+                        g: Math.round(cp[i].g + f * (cp[i + 1].g - cp[i].g)),
+                        b: Math.round(cp[i].b + f * (cp[i + 1].b - cp[i].b))
+                    };
+                }
+            }
+            return cp[cp.length - 1];
+        }
+
+        // Compute density field for square3
+        function computeDensityFieldImageData(res) {
+            const w = res, h = res;
+            const off = document.createElement("canvas");
+            off.width = w; off.height = h;
+            const oc = off.getContext("2d");
+            const imageData = oc.createImageData(w, h);
+            const data = imageData.data;
+            const sX = 0.5, sY = 0.5;
+            for (let j = 0; j < h; j++) {
+                for (let i = 0; i < w; i++) {
+                    const x = i / w;
+                    const y = 1 - (j / h); // keeping your coordinate flip
+                    const d = Math.hypot(x - sX, y - sY);
+                    const f = Math.exp(-100 * ((d - 0.2) ** 2));
+                    const c = plasmaColor(f);
+                    const idx = (j * w + i) * 4;
+                    data[idx + 0] = c.r;
+                    data[idx + 1] = c.g;
+                    data[idx + 2] = c.b;
+                    data[idx + 3] = 255;
+                }
+            }
+            return imageData;
+        }
+
+        // drawScaledImageData helper (unchanged)
+        function drawScaledImageData(ctx, imageData, dw, dh) {
+            const off = document.createElement("canvas");
+            off.width = imageData.width;
+            off.height = imageData.height;
+            const oc = off.getContext("2d");
+            oc.putImageData(imageData, 0, 0);
+            ctx.drawImage(off, 0, 0, dw, dh);
+        }
+
+        /********************************************************************
+         * PART 3: Setup: Candidate Positions, and Initialize Belief/Density
+         ********************************************************************/
+        const candidatePositions = [];
+        for (let j = 0; j < gridRes; j++) {
+            for (let i = 0; i < gridRes; i++) {
+                // Using your convention: x=i/gridRes, y= 1 - j/gridRes
+                candidatePositions.push({ x: i / gridRes, y: 1 - j / gridRes });
+            }
+        }
+
+        function initializeBelief() {
+            beliefMatrix = new Array(totalCells).fill(1);
+            normalizeBySum(beliefMatrix); // now beliefMatrix becomes uniform (each = 1/totalCells)
+        }
+
+        // We'll use the candidatePositions when computing measurement likelihood
+        function measurementLikelihood(sx, sy, mx, my) {
+            const dist = Math.hypot(mx - sx, my - sy);
+            const likelihood = Math.exp(-100 * ((dist - 0.2) ** 2));
+            return Math.max(likelihood, 1e-6);
+        }
+
+        function distributionEntropy(dist) {
+            let e = 0;
+            for (let i = 0; i < dist.length; i++) {
+                const p = dist[i];
+                if (p > 0) e -= p * Math.log(p);
+            }
+            return e;
+        }
+
+        /********************************************************************
+         * PART 4: Setup Canvases and Precompute Density Field for Square3
+         ********************************************************************/
+        const canvases = document.querySelectorAll("canvas");
+        let densityFieldData = null;
+        canvases.forEach(canvas => {
+            if (canvas.dataset.id === "square3") {
+                densityFieldData = computeDensityFieldImageData(gridRes);
+            }
+            if (canvas.dataset.id === "square4" && !beliefMatrix) {
+                initializeBelief();
+            }
+        });
+
+        // Draw a white triangle marker (for fixed markers)
+        function drawTriangleMarker(ctx, normX, normY, side, canvasHeight) {
+            const centerX = normX * ctx.canvas.width;
+            const centerY = canvasHeight - normY * ctx.canvas.height;
+            const radius = side * Math.sqrt(3) / 3;
+            const angleOffset = -Math.PI / 2;
+            const vertices = [];
+            for (let k = 0; k < 3; k++) {
+                const theta = angleOffset + k * (2 * Math.PI / 3);
+                vertices.push({
+                    x: centerX + radius * Math.cos(theta),
+                    y: centerY + radius * Math.sin(theta)
+                });
+            }
+            ctx.beginPath();
+            ctx.moveTo(vertices[0].x, vertices[0].y);
+            ctx.lineTo(vertices[1].x, vertices[1].y);
+            ctx.lineTo(vertices[2].x, vertices[2].y);
+            ctx.closePath();
+            ctx.fillStyle = "white";
+            ctx.fill();
+            ctx.lineWidth = 3;
+            ctx.strokeStyle = "black";
+            ctx.stroke();
+        }
+
+        /********************************************************************
+         * PART 5: Button and Mouse Events
+         ********************************************************************/
+        const errorMessageDiv = document.createElement("div");
+        errorMessageDiv.style.color = "red";
+        errorMessageDiv.style.fontWeight = "bold";
+        errorMessageDiv.style.marginTop = "5px";
+        document.body.insertBefore(errorMessageDiv, document.getElementById("topRowContainer"));
+
+        resetButton.addEventListener("click", () => {
+            hiddenTarget = { x: Math.random() * 0.6 + 0.2, y: Math.random() * 0.6 + 0.2 };
+            canvases.forEach(canvas => {
+                if (canvas.dataset.id === "square4") {
+                    initializeBelief();
+                    beliefFieldData = null;
+                }
+            });
+        });
+        toggleTargetButton.addEventListener("click", () => {
+            showHiddenTarget = !showHiddenTarget;
+            toggleTargetButton.textContent = showHiddenTarget ? "Hide Target" : "Show Target";
+        });
+        visualizeMIButton.addEventListener("click", () => {
+            miComputationIndex = 0;
+            showMIField = false;
+            miProgressBar.value = 0;
+            miInfo.innerText = "Progress: 0% | 0 iters/sec | Time left: – s";
+            miStartTime = performance.now();
+            const off = document.createElement("canvas");
+            off.width = gridRes; off.height = gridRes;
+            const oc = off.getContext("2d");
+            miFieldData = oc.createImageData(gridRes, gridRes);
+            animateMI();
+        });
+
+        canvases.forEach(canvas => {
+            canvas.addEventListener("mousemove", (e) => {
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = canvas.width / rect.width;
+                const scaleY = canvas.height / rect.height;
+                const x = (e.clientX - rect.left) * scaleX;
+                const y = (e.clientY - rect.top) * scaleY;
+                dot.target.x = x / canvas.width;
+                dot.target.y = 1 - (y / canvas.height); // consistent with candidatePositions
+                dot.visible = true;
+            });
+            canvas.addEventListener("mouseleave", () => {
+                dot.target.x = dot.pos.x;
+                dot.target.y = dot.pos.y;
+                dot.visible = false;
+            });
+        });
+
+        // Square4: Click events for Bayesian update
+        let sampledDot = null;
+        canvases.forEach(canvas => {
+            if (canvas.dataset.id === "square4") {
+                canvas.addEventListener("click", (e) => {
+                    const rect = canvas.getBoundingClientRect();
+                    const scaleX = canvas.width / rect.width;
+                    const scaleY = canvas.height / rect.height;
+                    const clickX = (e.clientX - rect.left) * scaleX;
+                    const clickY = (e.clientY - rect.top) * scaleY;
+                    const m = { x: clickX / canvas.width, y: 1 - (clickY / canvas.height) };
+
+                    const dx_true = m.x - hiddenTarget.x;
+                    const dy_true = m.y - hiddenTarget.y;
+                    const d_true = Math.hypot(dx_true, dy_true);
+                    const p_meas = Math.exp(-100 * ((d_true - 0.2) ** 2));
+                    const outcome = (Math.random() < p_meas) ? 1 : 0;
+                    sampledDot = { x: m.x, y: m.y, color: (outcome === 1) ? "red" : "white" };
+
+                    // Update beliefMatrix using the measurement likelihood,
+                    // and normalize using the sum.
+                    for (let j = 0; j < gridRes; j++) {
+                        for (let i = 0; i < gridRes; i++) {
+                            const idx = j * gridRes + i;
+                            const s_x = i / gridRes, s_y = 1 - (j / gridRes);
+                            const dd = Math.hypot(m.x - s_x, m.y - s_y);
+                            // Cap the likelihood to be at least 1e-6.
+                            const L = Math.max(Math.exp(-100 * ((dd - 0.2) ** 2)), 1e-6);
+                            // For the negative hypothesis, also cap 1 - L.
+                            const likelihood = (outcome === 1) ? L : Math.max(1 - L, 1e-6);
+                            beliefMatrix[idx] *= likelihood;
+                        }
+                    }
+                    normalizeBySum(beliefMatrix);
+
+                    // Build beliefFieldData for visualization using our min-max function:
+                    beliefFieldData = createVisualizationImage(beliefMatrix);
+                });
+            }
+        });
+
+        /********************************************************************
+         * PART 6: Progressive MI Calculation (using sum-based normalization)
+         ********************************************************************/
+        function animateMI() {
+            const w = gridRes, h = gridRes;
+            if (miComputationIndex < w * h) {
+                // Normalize beliefMatrix once to obtain the current probability distribution.
+                const sumBelief = beliefMatrix.reduce((a, b) => a + b, 0);
+                const normBelief = new Array(totalCells);
+                for (let i = 0; i < totalCells; i++) {
+                    normBelief[i] = beliefMatrix[i] / sumBelief;
+                }
+                // The prior entropy is constant (for this iteration) computed using the current normalized belief.
+                const priorEntropy = distributionEntropy(normBelief);
+
+                // Process a batch of cells
+                for (let n = 0; n < miBatchSize && miComputationIndex < w * h; n++, miComputationIndex++) {
+                    const i = miComputationIndex % w;
+                    const j = Math.floor(miComputationIndex / w);
+                    // Candidate measurement location corresponding to this grid cell.
+                    const xCand = { x: i / w, y: 1 - (j / h) };
+
+                    // Compute p(y=1) for candidate xCand.
+                    let p_y1 = 0;
+                    for (let k = 0; k < totalCells; k++) {
+                        const s = candidatePositions[k];
+                        const L = Math.max(Math.exp(-100 * ((Math.hypot(xCand.x - s.x, xCand.y - s.y) - 0.2) ** 2)), 1e-6);
+                        p_y1 += normBelief[k] * L;
+                    }
+                    const p_y0 = 1 - p_y1;
+
+                    // Compute hypothetical posterior for outcome y=1.
+                    let postY1 = new Array(totalCells);
+                    for (let k = 0; k < totalCells; k++) {
+                        const s = candidatePositions[k];
+                        const L = Math.max(Math.exp(-100 * ((Math.hypot(xCand.x - s.x, xCand.y - s.y) - 0.2) ** 2)), 1e-6);
+                        postY1[k] = normBelief[k] * L;
+                    }
+                    normalizeBySum(postY1);
+                    const H_postY1 = distributionEntropy(postY1);
+
+                    // Compute hypothetical posterior for outcome y=0.
+                    let postY0 = new Array(totalCells);
+                    for (let k = 0; k < totalCells; k++) {
+                        const s = candidatePositions[k];
+                        const L = Math.max(Math.exp(-100 * ((Math.hypot(xCand.x - s.x, xCand.y - s.y) - 0.2) ** 2)), 1e-6);
+                        postY0[k] = normBelief[k] * (1 - L);
+                    }
+                    normalizeBySum(postY0);
+                    const H_postY0 = distributionEntropy(postY0);
+
+                    // Now, using the table’s formula for mutual information:
+                    const I_x = (priorEntropy - (p_y1 * H_postY1 + p_y0 * H_postY0)) * 255.0;
+                    // console.log('I_x: ', I_x)
+
+                    // Store the computed MI value in the raw MI buffer. Save it into each RGB channel.
+                    const dIndex = miComputationIndex * 4;
+                    miFieldData.data[dIndex] = I_x;
+                    miFieldData.data[dIndex + 1] = I_x;
+                    miFieldData.data[dIndex + 2] = I_x;
+                    miFieldData.data[dIndex + 3] = 255;
+                }
+
+                // Update progress indicator
+                const progressPercent = (miComputationIndex / (w * h)) * 100;
+                miProgressBar.value = progressPercent;
+                const elapsed = (performance.now() - miStartTime) / 1000;
+                const itersPerSec = miComputationIndex / elapsed;
+                const timeLeft = ((w * h) - miComputationIndex) / itersPerSec;
+                miInfo.innerText = `Progress: ${progressPercent.toFixed(1)}% | ${itersPerSec.toFixed(1)} iters/sec | Time left: ${timeLeft.toFixed(1)} s`;
+
+                // Continue computing in the next animation frame.
+                requestAnimationFrame(animateMI);
+            } else {
+                // When all grid cells have been processed, adjust the MI field’s color intensity.
+                // Extract the raw MI values from the red channel.
+                const rawMI = new Array(totalCells);
+                for (let i = 0; i < totalCells; i++) {
+                    rawMI[i] = miFieldData.data[i * 4];
+                    console.log('rawMI[', i, "]: ", rawMI[i])
+                }
+                // Create a visualization image that scales the colormap to the min and max MI values.
+                miFieldData = createVisualizationImage(rawMI);
+                showMIField = true;
+            }
+        }
+
+        /********************************************************************
+         * PART 7: Real-Time Table Updates Using the Latest Belief
+         ********************************************************************/
+        function updateTableValues() {
+            if (!beliefMatrix) {
+                tdIx.textContent = "???";
+                tdPy1.textContent = "???";
+                tdDiff1.textContent = "???";
+                tdPy0.textContent = "???";
+                tdDiff0.textContent = "???";
+                return;
+            }
+            // Normalize beliefMatrix by sum
+            const sumBelief = beliefMatrix.reduce((a, b) => a + b, 0);
+            if (sumBelief <= 0) {
+                tdIx.textContent = "NaN";
+                tdPy1.textContent = "NaN";
+                tdDiff1.textContent = "NaN";
+                tdPy0.textContent = "NaN";
+                tdDiff0.textContent = "NaN";
+                return;
+            }
+            const normBelief = new Array(totalCells);
+            for (let i = 0; i < totalCells; i++) {
+                normBelief[i] = beliefMatrix[i] / sumBelief;
+            }
+            // console.log("Normalized belief sum:", normBelief.reduce((a, b) => a + b, 0), normBelief.reduce((a, b) => Math.max(a, b), -Infinity), normBelief.reduce((a, b) => Math.min(a, b), Infinity));
+            // Current mouse position (from dot.pos)
+            const mx = dot.pos.x, my = dot.pos.y;
+            console.log("mx: ", mx, ", my: ", my);
+
+            // p(y=1) using the measurement likelihood at the current mouse position
+            let p_y1 = 0;
+            for (let i = 0; i < totalCells; i++) {
+                const s = candidatePositions[i];
+                const L = measurementLikelihood(s.x, s.y, mx, my);
+                p_y1 += normBelief[i] * L;
+            }
+            const p_y0 = 1 - p_y1;
+
+            // Prior entropy: H(p(x))
+            const priorEntropy = distributionEntropy(normBelief);
+
+            // Hypothetical posterior if y=1:
+            let postY1 = new Array(totalCells);
+            for (let i = 0; i < totalCells; i++) {
+                const s = candidatePositions[i];
+                const L = measurementLikelihood(s.x, s.y, mx, my);
+                postY1[i] = normBelief[i] * L;
+            }
+            normalizeBySum(postY1);
+            const H_postY1 = distributionEntropy(postY1);
+
+            // Hypothetical posterior if y=0:
+            let postY0 = new Array(totalCells);
+            for (let i = 0; i < totalCells; i++) {
+                const s = candidatePositions[i];
+                const L = measurementLikelihood(s.x, s.y, mx, my);
+                postY0[i] = normBelief[i] * (1 - L);
+            }
+            normalizeBySum(postY0);
+            const H_postY0 = distributionEntropy(postY0);
+
+            const diff1 = priorEntropy - H_postY1;
+            const diff0 = priorEntropy - H_postY0;
+            const Ix = priorEntropy - (p_y1 * H_postY1 + p_y0 * H_postY0);
+
+            tdIx.textContent = Ix.toFixed(3);
+            document.getElementById("tdX").textContent =
+                `(${dot.pos.x.toFixed(2)}, ${dot.pos.y.toFixed(2)})`;
+            tdPy1.textContent = p_y1.toFixed(3);
+            tdDiff1.textContent = diff1.toFixed(3);
+            tdPy0.textContent = p_y0.toFixed(3);
+            tdDiff0.textContent = diff0.toFixed(3);
+        }
+
+        /********************************************************************
+         * PART 8: Main Animation Loop
+         ********************************************************************/
+        function animate() {
+            updateTableValues();
+
+            canvases.forEach(canvas => {
+                const ctx = canvas.getContext("2d");
+                if (canvas.dataset.id === "square3") {
+                    // For square3 (density field): draw the density field and fixed marker...
+                    if (densityFieldData) {
+                        const rawDensity = new Array(gridRes * gridRes);
+                        for (let i = 0; i < rawDensity.length; i++) {
+                            rawDensity[i] = densityFieldData.data[i * 4];
+                        }
+                        const visImg = createVisualizationImage(rawDensity);
+                        drawScaledImageData(ctx, visImg, canvas.width, canvas.height);
+                    }
+                    // Draw the fixed triangle marker at center.
+                    drawTriangleMarker(ctx, 0.5, 0.5, 60, canvas.height);
+                    // DRAW MOUSE TRACKER IN SQUARE3: always grey.
+                    const trackerX = dot.pos.x * canvas.width;
+                    const trackerY = canvas.height - (dot.pos.y * canvas.height);
+                    ctx.beginPath();
+                    ctx.arc(trackerX, trackerY, 10, 0, 2 * Math.PI);
+                    ctx.fillStyle = "grey";
+                    ctx.fill();
+                    ctx.lineWidth = 2;
+                    ctx.strokeStyle = "black";
+                    ctx.stroke();
+                    // ctx.font = "16px sans-serif";
+                    // ctx.fillStyle = "black";
+                    // ctx.textBaseline = "middle";
+                    // ctx.fillText(`(${dot.pos.x.toFixed(2)}, ${dot.pos.y.toFixed(2)})`, trackerX + 15, trackerY);
+                }
+                else if (canvas.dataset.id === "square4") {
+                    // For square4 (iterative belief): visualize the belief field.
+                    if (beliefMatrix) {
+                        const visImg = createVisualizationImage(beliefMatrix);
+                        drawScaledImageData(ctx, visImg, canvas.width, canvas.height);
+                    } else {
+                        ctx.fillStyle = "white";
+                        ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    }
+                    if (showHiddenTarget) {
+                        drawTriangleMarker(ctx, hiddenTarget.x, hiddenTarget.y, 60, canvas.height);
+                    }
+                    // Draw the measurement sample marker if one exists.
+                    if (sampledDot) {
+                        const sampleX = sampledDot.x * canvas.width;
+                        const sampleY = canvas.height - (sampledDot.y * canvas.height);
+                        ctx.beginPath();
+                        ctx.arc(sampleX, sampleY, 10, 0, 2 * Math.PI);
+                        ctx.fillStyle = sampledDot.color;
+                        ctx.fill();
+                        ctx.lineWidth = 2;
+                        ctx.strokeStyle = "black";
+                        ctx.stroke();
+                    }
+                    // DRAW MOUSE TRACKER IN SQUARE4:
+                    // Use the measurement color (red/white) if a measurement has been taken, otherwise default to white.
+                    const trackerX = dot.pos.x * canvas.width;
+                    const trackerY = canvas.height - (dot.pos.y * canvas.height);
+                    ctx.beginPath();
+                    ctx.arc(trackerX, trackerY, 10, 0, 2 * Math.PI);
+                    const trackerColor = sampledDot ? sampledDot.color : "white";
+                    ctx.fillStyle = trackerColor;
+                    ctx.fill();
+                    ctx.lineWidth = 2;
+                    ctx.strokeStyle = "black";
+                    ctx.stroke();
+                    ctx.font = "16px sans-serif";
+                    ctx.fillStyle = "black";
+                    ctx.textBaseline = "middle";
+                    ctx.fillText(`(${dot.pos.x.toFixed(2)}, ${dot.pos.y.toFixed(2)})`, trackerX + 15, trackerY);
+                }
+                else if (canvas.dataset.id === "square5") {
+                    // For square5 (MI field): visualize using MI field data if computed.
+                    if (showMIField && miFieldData) {
+                        const rawMI = new Array(totalCells);
+                        for (let i = 0; i < totalCells; i++) {
+                            rawMI[i] = miFieldData.data[i * 4];
+                        }
+                        const visImg = createVisualizationImage(rawMI);
+                        drawScaledImageData(ctx, visImg, canvas.width, canvas.height);
+                    } else {
+                        ctx.fillStyle = "white";
+                        ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    }
+                    // DRAW MOUSE TRACKER IN SQUARE5: always grey.
+                    const trackerX = dot.pos.x * canvas.width;
+                    const trackerY = canvas.height - (dot.pos.y * canvas.height);
+                    ctx.beginPath();
+                    ctx.arc(trackerX, trackerY, 10, 0, 2 * Math.PI);
+                    ctx.fillStyle = "grey";
+                    ctx.fill();
+                    ctx.lineWidth = 2;
+                    ctx.strokeStyle = "black";
+                    ctx.stroke();
+                    ctx.font = "16px sans-serif";
+                    ctx.fillStyle = "black";
+                    ctx.textBaseline = "middle";
+                    ctx.fillText(`(${dot.pos.x.toFixed(2)}, ${dot.pos.y.toFixed(2)})`, trackerX + 15, trackerY);
+                }
+                // For top row squares (square1 and square2: hypothetical posteriors),
+                // your existing code draws the tracker marker, so we leave those unchanged.
+                if (canvas.dataset.id === "square1" || canvas.dataset.id === "square2") {
+                    let hypoBelief = new Array(totalCells).fill(0);
+                    let maxValHypo = -Infinity;
+                    for (let j = 0; j < gridRes; j++) {
+                        for (let i = 0; i < gridRes; i++) {
+                            const idx = j * gridRes + i;
+                            const s_x = i / gridRes;
+                            const s_y = 1 - (j / gridRes);
+                            const dist = Math.hypot(dot.pos.x - s_x, dot.pos.y - s_y);
+                            let L;
+                            if (canvas.dataset.id === "square1") {
+                                L = Math.max(Math.exp(-100 * ((dist - 0.2) ** 2)), 1e-6);
+                            } else {
+                                L = Math.max(1 - Math.exp(-100 * ((dist - 0.2) ** 2)), 1e-6);
+                            }
+                            const prior = beliefMatrix ? beliefMatrix[idx] : 1;
+                            hypoBelief[idx] = prior * L;
+                            if (hypoBelief[idx] > maxValHypo) maxValHypo = hypoBelief[idx];
+                        }
+                    }
+                    normalizeBySum(hypoBelief);
+                    const visImg = createVisualizationImage(hypoBelief);
+                    drawScaledImageData(ctx, visImg, canvas.width, canvas.height);
+                    // Draw tracker marker using the prior method for top squares.
+                    const trackerX = dot.pos.x * canvas.width;
+                    const trackerY = canvas.height - (dot.pos.y * canvas.height);
+                    ctx.beginPath();
+                    ctx.arc(trackerX, trackerY, 10, 0, 2 * Math.PI);
+                    ctx.fillStyle = (canvas.dataset.id === "square1") ? "red" : "white";
+                    ctx.fill();
+                    ctx.lineWidth = 2;
+                    ctx.strokeStyle = "black";
+                    ctx.stroke();
+                    ctx.font = "16px sans-serif";
+                    ctx.fillStyle = "black";
+                    ctx.textBaseline = "middle";
+                    ctx.fillText(`(${dot.pos.x.toFixed(2)}, ${dot.pos.y.toFixed(2)})`, trackerX + 15, trackerY);
+                }
+            });
+
+            // Update mouse tracker velocity.
+            const diffX = dot.target.x - dot.pos.x;
+            const diffY = dot.target.y - dot.pos.y;
+            let vx = diffX * velocityFactor, vy = diffY * velocityFactor;
+            const speed = Math.sqrt(vx * vx + vy * vy);
+            if (speed > maxVelocity) {
+                const scale = maxVelocity / speed;
+                vx *= scale; vy *= scale;
+            }
+            dot.pos.x += vx;
+            dot.pos.y += vy;
+
+            requestAnimationFrame(animate);
+        }
+
+
+        /********************************************************************
+         * PART 9: Start the Main Loop
+         ********************************************************************/
+        animate();
+    </script>
+</body>
+
+</html>
