@@ -168,7 +168,7 @@
         const totalCells = gridRes * gridRes;
         const miBatchSize = 10;
         let beliefMatrix = null;
-        let beliefFieldData = null;   // Not used for underlying value—only for display if needed
+        let beliefFieldData = null;   // For visualization purposes only
         let hiddenTarget = { x: Math.random() * 0.6 + 0.2, y: Math.random() * 0.6 + 0.2 };
         let showHiddenTarget = false;
         let miFieldData = null;
@@ -176,7 +176,7 @@
         let showMIField = false;
         let miStartTime = 0;
 
-        // Table cells for our values
+        // Table cells
         const tdIx = document.getElementById("tdIx");
         const tdPy1 = document.getElementById("tdPy1");
         const tdDiff1 = document.getElementById("tdDiff1");
@@ -193,14 +193,14 @@
         const toggleTargetButton = document.getElementById("toggleTargetButton");
         const visualizeMIButton = document.getElementById("visualizeMIButton");
 
-        // Tracker for mouse position etc.
+        // Tracker for mouse/touch position etc.
         const dot = { pos: { x: 0, y: 0 }, target: { x: 0, y: 0 }, visible: false };
         const velocityFactor = 0.15, maxVelocity = 0.05;
 
         /********************************************************************
          * PART 2: Helper Functions
          ********************************************************************/
-        // Sum-based normalization helper function
+        // Sum-based normalization
         function normalizeBySum(array) {
             const sumVal = array.reduce((a, b) => a + b, 0);
             if (sumVal > 0) {
@@ -215,8 +215,7 @@
             }
         }
 
-        // Create a visualization ImageData from a 1D data array using min-max normalization.
-        // This adjusts the color intensity for display purposes without changing the underlying data.
+        // Create visualization image from a 1D data array.
         function createVisualizationImage(dataArray) {
             let minVal = Infinity, maxVal = -Infinity;
             for (let i = 0; i < dataArray.length; i++) {
@@ -224,16 +223,13 @@
                 if (dataArray[i] > maxVal) maxVal = dataArray[i];
             }
             const range = (maxVal - minVal) > 0 ? (maxVal - minVal) : 1;
-            // Create an ImageData object to draw on a offscreen canvas of size gridRes x gridRes.
             const off = document.createElement("canvas");
             off.width = gridRes;
             off.height = gridRes;
             const ctx = off.getContext("2d");
             let imgData = ctx.createImageData(gridRes, gridRes);
             for (let i = 0; i < dataArray.length; i++) {
-                // Normalize to [0,1]
                 let normVal = (dataArray[i] - minVal) / range;
-                // Clamp just in case
                 normVal = Math.min(Math.max(normVal, 0), 1);
                 const c = plasmaColor(normVal);
                 let idx = i * 4;
@@ -245,7 +241,7 @@
             return imgData;
         }
 
-        // Plasma colormap function
+        // Plasma colormap
         function plasmaColor(t) {
             const cp = [
                 { t: 0.0, r: 13, g: 8, b: 135 },
@@ -269,7 +265,7 @@
             return cp[cp.length - 1];
         }
 
-        // Compute density field for square3
+        // Compute density field for square3.
         function computeDensityFieldImageData(res) {
             const w = res, h = res;
             const off = document.createElement("canvas");
@@ -282,7 +278,7 @@
             for (let j = 0; j < h; j++) {
                 for (let i = 0; i < w; i++) {
                     const x = i / w;
-                    const y = 1 - (j / h); // keeping your coordinate flip
+                    const y = 1 - (j / h); // coordinate flip
                     const d = Math.hypot(x - sX, y - sY);
                     const f = Math.exp(-100 * ((d - 0.2) ** 2));
                     const c = plasmaColor(f);
@@ -296,7 +292,7 @@
             return imageData;
         }
 
-        // drawScaledImageData helper (unchanged)
+        // Draw imageData scaled to target dimensions.
         function drawScaledImageData(ctx, imageData, dw, dh) {
             const off = document.createElement("canvas");
             off.width = imageData.width;
@@ -307,28 +303,23 @@
         }
 
         /********************************************************************
-         * PART 3: Setup: Candidate Positions, and Initialize Belief/Density
+         * PART 3: Setup: Candidate Positions and Initialize Belief/Density
          ********************************************************************/
         const candidatePositions = [];
         for (let j = 0; j < gridRes; j++) {
             for (let i = 0; i < gridRes; i++) {
-                // Using your convention: x=i/gridRes, y= 1 - j/gridRes
                 candidatePositions.push({ x: i / gridRes, y: 1 - j / gridRes });
             }
         }
-
         function initializeBelief() {
             beliefMatrix = new Array(totalCells).fill(1);
-            normalizeBySum(beliefMatrix); // now beliefMatrix becomes uniform (each = 1/totalCells)
+            normalizeBySum(beliefMatrix);
         }
-
-        // We'll use the candidatePositions when computing measurement likelihood
         function measurementLikelihood(sx, sy, mx, my) {
             const dist = Math.hypot(mx - sx, my - sy);
             const likelihood = Math.exp(-100 * ((dist - 0.2) ** 2));
             return Math.max(likelihood, 1e-6);
         }
-
         function distributionEntropy(dist) {
             let e = 0;
             for (let i = 0; i < dist.length; i++) {
@@ -352,7 +343,7 @@
             }
         });
 
-        // Draw a white triangle marker (for fixed markers)
+        // Draw a fixed white triangle marker.
         function drawTriangleMarker(ctx, normX, normY, side, canvasHeight) {
             const centerX = normX * ctx.canvas.width;
             const centerY = canvasHeight - normY * ctx.canvas.height;
@@ -379,7 +370,7 @@
         }
 
         /********************************************************************
-         * PART 5: Button and Mouse Events + Touch Support for Square4
+         * PART 5: Button and Mouse/Touch Events
          ********************************************************************/
         const errorMessageDiv = document.createElement("div");
         errorMessageDiv.style.color = "red";
@@ -414,7 +405,7 @@
             animateMI();
         });
 
-        // Helper function to extract event coordinates (mouse or touch)
+        // Helper function to extract event coordinates for mouse and touch.
         function getEventCoordinates(e, canvas) {
             let clientX, clientY;
             if (e.changedTouches) {
@@ -433,12 +424,11 @@
             };
         }
 
-        // Shared function for handling a tap/click on square4
+        // Shared function for handling a tap/click on square4.
         function handleBeliefTap(e, canvas) {
             e.preventDefault();
             const coords = getEventCoordinates(e, canvas);
             const m = { x: coords.x / canvas.width, y: 1 - (coords.y / canvas.height) };
-
             const dx_true = m.x - hiddenTarget.x;
             const dy_true = m.y - hiddenTarget.y;
             const d_true = Math.hypot(dx_true, dy_true);
@@ -446,7 +436,6 @@
             const outcome = (Math.random() < p_meas) ? 1 : 0;
             sampledDot = { x: m.x, y: m.y, color: (outcome === 1) ? "red" : "white" };
 
-            // Update beliefMatrix using measurement likelihood.
             for (let j = 0; j < gridRes; j++) {
                 for (let i = 0; i < gridRes; i++) {
                     const idx = j * gridRes + i;
@@ -461,7 +450,7 @@
             beliefFieldData = createVisualizationImage(beliefMatrix);
         }
 
-        // Mouse event listeners for all canvases for hover tracking.
+        // Add mouse event listeners for hover tracking to all canvases.
         canvases.forEach(canvas => {
             canvas.addEventListener("mousemove", (e) => {
                 const rect = canvas.getBoundingClientRect();
@@ -470,7 +459,7 @@
                 const x = (e.clientX - rect.left) * scaleX;
                 const y = (e.clientY - rect.top) * scaleY;
                 dot.target.x = x / canvas.width;
-                dot.target.y = 1 - (y / canvas.height); // consistent with candidatePositions
+                dot.target.y = 1 - (y / canvas.height);
                 dot.visible = true;
             });
             canvas.addEventListener("mouseleave", () => {
@@ -478,29 +467,29 @@
                 dot.target.y = dot.pos.y;
                 dot.visible = false;
             });
+            // Add touch event listeners to all canvases (for dragging).
+            canvas.addEventListener("touchstart", (e) => {
+                e.preventDefault();
+                const coords = getEventCoordinates(e, canvas);
+                dot.target.x = coords.x / canvas.width;
+                dot.target.y = 1 - (coords.y / canvas.height);
+                dot.visible = true;
+            }, false);
+            canvas.addEventListener("touchmove", (e) => {
+                e.preventDefault();
+                const coords = getEventCoordinates(e, canvas);
+                dot.target.x = coords.x / canvas.width;
+                dot.target.y = 1 - (coords.y / canvas.height);
+            }, false);
         });
 
-        // For square4 (iterative belief) add both mouse click and touch support.
+        // For square4 add click and touchend for measurement update.
         let sampledDot = null;
         canvases.forEach(canvas => {
             if (canvas.dataset.id === "square4") {
                 canvas.addEventListener("click", (e) => {
                     handleBeliefTap(e, canvas);
                 });
-                // Touch events for square4.
-                canvas.addEventListener("touchstart", (e) => {
-                    e.preventDefault();
-                    const coords = getEventCoordinates(e, canvas);
-                    dot.target.x = coords.x / canvas.width;
-                    dot.target.y = 1 - (coords.y / canvas.height);
-                    dot.visible = true;
-                }, false);
-                canvas.addEventListener("touchmove", (e) => {
-                    e.preventDefault();
-                    const coords = getEventCoordinates(e, canvas);
-                    dot.target.x = coords.x / canvas.width;
-                    dot.target.y = 1 - (coords.y / canvas.height);
-                }, false);
                 canvas.addEventListener("touchend", (e) => {
                     handleBeliefTap(e, canvas);
                 }, false);
@@ -508,25 +497,21 @@
         });
 
         /********************************************************************
-         * PART 6: Progressive MI Calculation (using sum-based normalization)
+         * PART 6: Progressive MI Calculation
          ********************************************************************/
         function animateMI() {
             const w = gridRes, h = gridRes;
             if (miComputationIndex < w * h) {
-                // Normalize beliefMatrix once to obtain the current probability distribution.
                 const sumBelief = beliefMatrix.reduce((a, b) => a + b, 0);
                 const normBelief = new Array(totalCells);
                 for (let i = 0; i < totalCells; i++) {
                     normBelief[i] = beliefMatrix[i] / sumBelief;
                 }
                 const priorEntropy = distributionEntropy(normBelief);
-
-                // Process a batch of cells
                 for (let n = 0; n < miBatchSize && miComputationIndex < w * h; n++, miComputationIndex++) {
                     const i = miComputationIndex % w;
                     const j = Math.floor(miComputationIndex / w);
                     const xCand = { x: i / w, y: 1 - (j / h) };
-
                     let p_y1 = 0;
                     for (let k = 0; k < totalCells; k++) {
                         const s = candidatePositions[k];
@@ -534,7 +519,6 @@
                         p_y1 += normBelief[k] * L;
                     }
                     const p_y0 = 1 - p_y1;
-
                     let postY1 = new Array(totalCells);
                     for (let k = 0; k < totalCells; k++) {
                         const s = candidatePositions[k];
@@ -543,7 +527,6 @@
                     }
                     normalizeBySum(postY1);
                     const H_postY1 = distributionEntropy(postY1);
-
                     let postY0 = new Array(totalCells);
                     for (let k = 0; k < totalCells; k++) {
                         const s = candidatePositions[k];
@@ -552,7 +535,6 @@
                     }
                     normalizeBySum(postY0);
                     const H_postY0 = distributionEntropy(postY0);
-
                     const I_x = (priorEntropy - (p_y1 * H_postY1 + p_y0 * H_postY0)) * 255.0;
                     const dIndex = miComputationIndex * 4;
                     miFieldData.data[dIndex] = I_x;
@@ -560,20 +542,17 @@
                     miFieldData.data[dIndex + 2] = I_x;
                     miFieldData.data[dIndex + 3] = 255;
                 }
-
                 const progressPercent = (miComputationIndex / (w * h)) * 100;
                 miProgressBar.value = progressPercent;
                 const elapsed = (performance.now() - miStartTime) / 1000;
                 const itersPerSec = miComputationIndex / elapsed;
                 const timeLeft = ((w * h) - miComputationIndex) / itersPerSec;
                 miInfo.innerText = `Progress: ${progressPercent.toFixed(1)}% | ${itersPerSec.toFixed(1)} iters/sec | Time left: ${timeLeft.toFixed(1)} s`;
-
                 requestAnimationFrame(animateMI);
             } else {
                 const rawMI = new Array(totalCells);
                 for (let i = 0; i < totalCells; i++) {
                     rawMI[i] = miFieldData.data[i * 4];
-                    console.log('rawMI[', i, "]: ", rawMI[i])
                 }
                 miFieldData = createVisualizationImage(rawMI);
                 showMIField = true;
@@ -581,7 +560,7 @@
         }
 
         /********************************************************************
-         * PART 7: Real-Time Table Updates Using the Latest Belief
+         * PART 7: Real-Time Table Updates
          ********************************************************************/
         function updateTableValues() {
             if (!beliefMatrix) {
@@ -616,7 +595,6 @@
             }
             const p_y0 = 1 - p_y1;
             const priorEntropy = distributionEntropy(normBelief);
-
             let postY1 = new Array(totalCells);
             for (let i = 0; i < totalCells; i++) {
                 const s = candidatePositions[i];
@@ -625,7 +603,6 @@
             }
             normalizeBySum(postY1);
             const H_postY1 = distributionEntropy(postY1);
-
             let postY0 = new Array(totalCells);
             for (let i = 0; i < totalCells; i++) {
                 const s = candidatePositions[i];
@@ -634,11 +611,9 @@
             }
             normalizeBySum(postY0);
             const H_postY0 = distributionEntropy(postY0);
-
             const diff1 = priorEntropy - H_postY1;
             const diff0 = priorEntropy - H_postY0;
             const Ix = priorEntropy - (p_y1 * H_postY1 + p_y0 * H_postY0);
-
             tdIx.textContent = Ix.toFixed(3);
             tdX.textContent = `(${dot.pos.x.toFixed(2)}, ${dot.pos.y.toFixed(2)})`;
             tdPy1.textContent = p_y1.toFixed(3);
@@ -652,7 +627,6 @@
          ********************************************************************/
         function animate() {
             updateTableValues();
-
             canvases.forEach(canvas => {
                 const ctx = canvas.getContext("2d");
                 if (canvas.dataset.id === "square3") {
@@ -665,7 +639,7 @@
                         drawScaledImageData(ctx, visImg, canvas.width, canvas.height);
                     }
                     drawTriangleMarker(ctx, 0.5, 0.5, 60, canvas.height);
-                    // Draw tracker marker in square3 (always grey)
+                    // Tracker marker (always grey)
                     const trackerX = dot.pos.x * canvas.width;
                     const trackerY = canvas.height - (dot.pos.y * canvas.height);
                     ctx.beginPath();
@@ -697,7 +671,7 @@
                         ctx.strokeStyle = "black";
                         ctx.stroke();
                     }
-                    // Draw tracker marker in square4; use measurement color if available, otherwise white.
+                    // Tracker marker in square4 uses measurement color if available, else white.
                     const trackerX = dot.pos.x * canvas.width;
                     const trackerY = canvas.height - (dot.pos.y * canvas.height);
                     ctx.beginPath();
@@ -720,7 +694,7 @@
                         ctx.fillStyle = "white";
                         ctx.fillRect(0, 0, canvas.width, canvas.height);
                     }
-                    // Draw tracker marker in square5 (always grey)
+                    // Tracker marker in square5 (always grey)
                     const trackerX = dot.pos.x * canvas.width;
                     const trackerY = canvas.height - (dot.pos.y * canvas.height);
                     ctx.beginPath();
@@ -731,7 +705,7 @@
                     ctx.strokeStyle = "black";
                     ctx.stroke();
                 }
-                // For squares 1 and 2 (top row hypothetical posteriors):
+                // Top row squares (square1 and square2)
                 if (canvas.dataset.id === "square1" || canvas.dataset.id === "square2") {
                     let hypoBelief = new Array(totalCells).fill(0);
                     let maxValHypo = -Infinity;
@@ -766,19 +740,18 @@
                     ctx.stroke();
                 }
             });
-
-            // Update the tracker velocity.
+            // Update tracker position (smooth movement).
             const diffX = dot.target.x - dot.pos.x;
             const diffY = dot.target.y - dot.pos.y;
             let vx = diffX * velocityFactor, vy = diffY * velocityFactor;
             const speed = Math.sqrt(vx * vx + vy * vy);
             if (speed > maxVelocity) {
                 const scale = maxVelocity / speed;
-                vx *= scale; vy *= scale;
+                vx *= scale;
+                vy *= scale;
             }
             dot.pos.x += vx;
             dot.pos.y += vy;
-
             requestAnimationFrame(animate);
         }
 
