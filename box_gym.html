@@ -1,0 +1,604 @@
+<!--
+    This file is part of the Rectangle Localization Playground project.
+    Copyright (C) 2025 Max Muchen Sun
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+
+<!-- 
+    Author: Max Muchen Sun (msun@u.northwestern.edu)
+    Date: 2025-03-07
+    Description: Rectangle Localization Playground
+-->
+
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Rectangle Sensing Playground</title>
+    <style>
+        /* body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            background-color: white;
+        } */
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;       /* center title + main-content */
+            margin: 0;
+            padding: 0;
+            background-color: white;
+        }
+        h3, h4 {
+            margin: 0.2em 0.2em;
+        }
+
+        .main-content {
+            display: flex;
+            flex-direction: row;
+            align-items: center;   /* ← centers the controls vertically relative to the 640px canvas */
+            gap: 30px;
+        }
+
+        .container {
+            position: relative;
+            width: 640px;
+            height: 640px;
+            border: 3px solid black;
+            margin-bottom: 10px;
+        }
+
+        .camera-view {
+            position: absolute;
+            border: 3px solid black;
+            /* Transparent background */
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .button-container {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            align-items: left;
+            margin-bottom: 10px;
+        }
+
+        .button {
+            padding: 10px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+
+        .slider-container {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            align-items: flex-start;
+        }
+
+        .list-container {
+            margin: 20px 0;
+            margin-left: 0px;
+        }
+        .list-container label {
+            display: block;
+            margin-bottom: 0px;
+            margin-left: 0px;
+        }
+        .list-container select {
+            margin-top: 5px;   
+            margin-bottom: 0px;
+            padding: 4px 6px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h3>Move the Mouse, Learn the Box, Everything is a Box</h3>
+    <h4>
+        Author: <a href="https://maxsun.io/" target="_blank">Max Muchen Sun</a> | March, 2025
+    </h4>
+
+    <div class="main-content">
+        <div class="container" id="env-container">
+            <canvas id="offscreenCanvas" width="640" height="640" style="display:none;"></canvas>
+            <canvas id="envCanvas" width="640" height="640"></canvas>
+            <div class="camera-view" id="cameraView">
+                <canvas id="cameraCanvas"></canvas>
+            </div>
+        </div>
+
+        <!-- ─── ALL CONTROLS ───────────────────────────────────────────────────── -->
+        <div class="controls">
+            <!-- Buttons -->
+            <div class="button-container">
+                <button class="button" id="randomizeEnv">Randomize Environment</button>
+                <button class="button" id="toggleBgButton">Show Background</button>
+            </div>
+            <div class="list-container">
+                <div>
+                    <label for="modeSelect">Batch Selection:</label>
+                    <select id="modeSelect" size="3" style="width: 100px;">
+                        <option value="0" selected>Keep All</option>
+                        <option value="1">Keep Latest</option>
+                        <option value="2">Shuffle</option>
+                    </select>
+                </div>
+            </div>
+            <!-- Sliders -->
+            <div class="slider-container">
+                <div>
+                    <label for="batchSizeSlider">Batch Size:</label>
+                    <input type="range" id="batchSizeSlider" min="1" max="100" step="1" value="50">
+                    <span id="batchSizeValue">50</span>
+                </div>
+                <div>
+                    <label for="camSizeSlider">Sensor Box Size:</label>
+                    <input type="range" id="camSizeSlider" min="16" max="640" step="4" value="64">
+                    <span id="camSizeValue">64</span>
+                </div>
+                <div>
+                    <label for="gridCountSlider">Sample Rate:</label>
+                    <input type="range" id="gridCountSlider" min="0" max="16" step="1" value="2">
+                    <span id="gridCountValue">2</span>
+                </div>
+                <!-- <div>
+                    <label for="sensorUncertaintySlider">Sensor Uncertainty:</label>
+                    <input type="range" id="sensorUncertaintySlider" min="0" max="1" step="0.01" value="0.2">
+                    <span id="sensorUncertaintyValue">0.20</span>
+                </div> -->
+            </div>
+        </div>
+    </div>
+
+
+    <script>
+        // --------------------------------------------------------------------------------
+        // DOM elements
+        // --------------------------------------------------------------------------------
+        const offscreenCanvas = document.getElementById("offscreenCanvas");
+        const offscreenCtx = offscreenCanvas.getContext("2d");
+        const envCanvas = document.getElementById("envCanvas");
+        const envCtx = envCanvas.getContext("2d");
+        const cameraCanvas = document.getElementById("cameraCanvas");
+        const cameraCtx = cameraCanvas.getContext("2d");
+        const cameraView = document.getElementById("cameraView");
+
+        const randomizeButton = document.getElementById("randomizeEnv");
+        const toggleBgButton = document.getElementById("toggleBgButton");
+
+        const camSizeSlider = document.getElementById("camSizeSlider");
+        const camSizeValue = document.getElementById("camSizeValue");
+        const gridCountSlider = document.getElementById("gridCountSlider");
+        const gridCountValue = document.getElementById("gridCountValue");
+        // const sensorUncertaintySlider = document.getElementById("sensorUncertaintySlider");
+        // const sensorUncertaintyValue = document.getElementById("sensorUncertaintyValue");
+
+        const batchSizeSlider = document.getElementById("batchSizeSlider")
+        const batchSizeValue = document.getElementById("batchSizeValue")
+        const modeSelect = document.getElementById("modeSelect")
+
+
+        // --------------------------------------------------------------------------------
+        // Global state + parameters
+        // --------------------------------------------------------------------------------
+        const envSize = 640;
+        let camSize = parseInt(camSizeSlider.value);
+        let numSamples = parseInt(gridCountSlider.value);
+        // let sensorUncertainty = parseFloat(sensorUncertaintySlider.value);
+
+        let cameraX = envSize / 2;
+        let cameraY = envSize / 2;
+        let camX = envSize / 2;
+        let camY = envSize / 2;
+        let targetX = cameraX;
+        let targetY = cameraY;
+        const trackingSpeed = 0.2;
+
+        let rect = null;  // The underlying rectangle in the environment
+
+        // Array to accumulate sensor sample dots (each: {globalX, globalY, dotRadius, fillColor})
+        let sensorDotsAll = [];
+        let sensorDots = [];
+        let maxSensorDots = parseInt(batchSizeSlider.value); // Upper bound for overall samples
+        let batchSelectionMode = 0;
+
+        // Candidate boxes (an array of objects: {x, y, width, height})
+        let candidateBoxes = [];
+
+        // Sampling rate for sensor dots: fixed at 5 Hz (every 200ms)
+        const sensorSampleInterval = 200; // in milliseconds
+        let lastSensorSampleTime = 0;
+
+        // Candidate estimation rate: separate from sensor sampling (e.g., every 1000ms = 1Hz)
+        const candidateEstimationInterval = 100; // in milliseconds
+        let lastCandidateEstimationTime = 0;
+
+        // Toggle for showing/hiding background image on envCanvas
+        let showBackground = false;
+
+        // --------------------------------------------------------------------------------
+        // Environment setup: generate a rectangle by randomizing its center first, then its size
+        // --------------------------------------------------------------------------------
+        function generateEnvironment() {
+            // Clear offscreen canvas and fill background
+            offscreenCtx.fillStyle = "#F0F0F0";
+            offscreenCtx.fillRect(0, 0, envSize, envSize);
+
+            // Randomize center first.
+            const minHalfWidth = 50;  // lower bound for half-width (min width = 50)
+            const minHalfHeight = 50; // lower bound for half-height (min height = 50)
+
+            const centerX = Math.random() * (envSize - 2 * minHalfWidth) + minHalfWidth;
+            const centerY = Math.random() * (envSize - 2 * minHalfHeight) + minHalfHeight;
+
+            const maxHalfWidth = Math.min(centerX, envSize - centerX);
+            const maxHalfHeight = Math.min(centerY, envSize - centerY);
+
+            const halfWidth = Math.random() * (maxHalfWidth - minHalfWidth) + minHalfWidth;
+            const halfHeight = Math.random() * (maxHalfHeight - minHalfHeight) + minHalfHeight;
+
+            rect = {
+                x: centerX - halfWidth,
+                y: centerY - halfHeight,
+                width: 2 * halfWidth,
+                height: 2 * halfHeight
+            };
+
+            offscreenCtx.fillStyle = "grey";
+            offscreenCtx.fillRect(rect.x, rect.y, rect.width, rect.height);
+
+            // Clear accumulated sensor dots and candidate boxes.
+            sensorDotsAll = [];
+            sensorDots = [];
+            candidateBoxes = [];
+        }
+
+        // --------------------------------------------------------------------------------
+        // Refresh the main canvas: draw background (if enabled), sensor dots, and candidate rectangles
+        // --------------------------------------------------------------------------------
+        function refreshMainCanvas() {
+            if (showBackground) {
+                envCtx.drawImage(offscreenCanvas, 0, 0);
+            } else {
+                envCtx.clearRect(0, 0, envSize, envSize);
+                envCtx.fillStyle = "white";
+                envCtx.fillRect(0, 0, envSize, envSize);
+            }
+
+            sensorDots.forEach(dot => {
+                envCtx.beginPath();
+                envCtx.arc(dot.globalX, dot.globalY, dot.dotRadius, 0, 2 * Math.PI);
+                envCtx.fillStyle = dot.fillColor;
+                envCtx.fill();
+                envCtx.strokeStyle = "black";
+                envCtx.stroke();
+            });
+
+            candidateBoxes.forEach(box => {
+                envCtx.beginPath();
+                envCtx.lineWidth = 2;
+                envCtx.strokeStyle = "red";
+                envCtx.rect(box.x, box.y, box.width, box.height);
+                envCtx.stroke();
+            });
+        }
+
+        // --------------------------------------------------------------------------------
+        // Camera (sensor box) and sensor sampling
+        // --------------------------------------------------------------------------------
+        function centerCamera() {
+            cameraX = envSize / 2;
+        }
+
+        function updateCameraView() {
+            cameraX += (targetX - cameraX) * trackingSpeed;
+            cameraY += (targetY - cameraY) * trackingSpeed;
+
+            camX = Math.max(0, Math.min(envSize - camSize - 5, cameraX - camSize / 2));
+            camY = Math.max(0, Math.min(envSize - camSize - 5, cameraY - camSize / 2));
+
+            cameraCanvas.width = camSize;
+            cameraCanvas.height = camSize;
+            cameraCtx.clearRect(0, 0, camSize, camSize);
+
+            cameraView.style.width = `${camSize}px`;
+            cameraView.style.height = `${camSize}px`;
+            cameraView.style.left = `${camX}px`;
+            cameraView.style.top = `${camY}px`;
+        }
+
+        // This function samples sensor points at 5 Hz.
+        // It samples numSamples dots uniformly within the sensor box.
+        // Each dot is recorded with probability sensorUncertainty.
+        // Dots inside the underlying rectangle are drawn black; otherwise white.
+        function sampleSensorPoints() {
+            const dotRadius = 4;
+            for (let i = 0; i < numSamples; i++) {
+                // if (Math.random() >= sensorUncertainty) continue;
+
+                const localX = Math.random() * camSize;
+                const localY = Math.random() * camSize;
+                const globalX = camX + localX;
+                const globalY = camY + localY;
+
+                let insideRect = false;
+                if (rect) {
+                    if (globalX >= rect.x && globalX <= rect.x + rect.width &&
+                        globalY >= rect.y && globalY <= rect.y + rect.height) {
+                        insideRect = true;
+                    }
+                }
+                const fillColor = insideRect ? "black" : "white";
+
+                cameraCtx.beginPath();
+                cameraCtx.arc(localX, localY, dotRadius, 0, 2 * Math.PI);
+                cameraCtx.fillStyle = fillColor;
+                cameraCtx.fill();
+                cameraCtx.strokeStyle = "black";
+                cameraCtx.stroke();
+
+                // sensorDots.push({ globalX, globalY, dotRadius, fillColor });
+                sensorDotsAll.push({ globalX, globalY, dotRadius, fillColor });
+            }
+
+
+
+            // if (sensorDots.length > maxSensorDots) {
+            //     sensorDots = sensorDots.sort(() => Math.random() - 0.5).slice(0, maxSensorDots);
+            //     // sensorDots = sensorDots.slice(0, maxSensorDots);
+            // }
+            sensorDots = sensorDotsAll.slice();
+
+            switch (batchSelectionMode) {
+                case 0:
+                    break;
+
+                case 1:
+                    if (sensorDots.length > maxSensorDots) {
+                        sensorDots = sensorDots.slice(-maxSensorDots);
+                    }
+                    break;
+
+                case 2:
+                    if (sensorDots.length > maxSensorDots) {
+                        sensorDots = sensorDots.sort(() => Math.random() - 0.5);
+                        sensorDots = sensorDots.slice(-maxSensorDots);
+                    }
+                    break;
+
+                default:
+                    console.warn("Unknown batchSelectionMode:", batchSelectionMode);
+            }
+        }
+
+        // --------------------------------------------------------------------------------
+        // Estimate candidate rectangles based on sensor dots using both black and white dot positions.
+        // The candidate box must not contain any white dot.
+        // --------------------------------------------------------------------------------
+        function estimateCandidateRectangles() {
+            candidateBoxes = [];
+            const minSize = 50; // fallback minimum size
+
+            // Separate black and white dots.
+            const blackDots = sensorDots.filter(dot => dot.fillColor === "black");
+            const whiteDots = sensorDots.filter(dot => dot.fillColor === "white");
+
+            // Helper function: check if a candidate box contains any white dot.
+            function containsWhite(box) {
+                return whiteDots.some(dot =>
+                    dot.globalX > box.x && dot.globalX < box.x + box.width &&
+                    dot.globalY > box.y && dot.globalY < box.y + box.height
+                );
+            }
+
+            if (blackDots.length > 0) {
+                // Compute the black dot bounding box.
+                const blackMinX = Math.min(...blackDots.map(dot => dot.globalX));
+                const blackMaxX = Math.max(...blackDots.map(dot => dot.globalX));
+                const blackMinY = Math.min(...blackDots.map(dot => dot.globalY));
+                const blackMaxY = Math.max(...blackDots.map(dot => dot.globalY));
+
+                // For left edge: consider white dots with x < blackMinX and y in [blackMinY, blackMaxY].
+                const whiteLeft = whiteDots.filter(dot =>
+                    dot.globalX < blackMinX &&
+                    dot.globalY >= blackMinY && dot.globalY <= blackMaxY
+                );
+                const leftLower = whiteLeft.length > 0 ? Math.max(...whiteLeft.map(dot => dot.globalX)) : 0;
+                const leftUpper = blackMinX;
+
+                // For right edge: white dots with x > blackMaxX and y in [blackMinY, blackMaxY].
+                const whiteRight = whiteDots.filter(dot =>
+                    dot.globalX > blackMaxX &&
+                    dot.globalY >= blackMinY && dot.globalY <= blackMaxY
+                );
+                const rightLower = blackMaxX;
+                const rightUpper = whiteRight.length > 0 ? Math.min(...whiteRight.map(dot => dot.globalX)) : envSize;
+
+                // For top edge: white dots with y < blackMinY and x in [blackMinX, blackMaxX].
+                const whiteTop = whiteDots.filter(dot =>
+                    dot.globalY < blackMinY &&
+                    dot.globalX >= blackMinX && dot.globalX <= blackMaxX
+                );
+                const topLower = whiteTop.length > 0 ? Math.max(...whiteTop.map(dot => dot.globalY)) : 0;
+                const topUpper = blackMinY;
+
+                // For bottom edge: white dots with y > blackMaxY and x in [blackMinX, blackMaxX].
+                const whiteBottom = whiteDots.filter(dot =>
+                    dot.globalY > blackMaxY &&
+                    dot.globalX >= blackMinX && dot.globalX <= blackMaxX
+                );
+                const bottomLower = blackMaxY;
+                const bottomUpper = whiteBottom.length > 0 ? Math.min(...whiteBottom.map(dot => dot.globalY)) : envSize;
+
+                // Now sample candidate boxes, but validate that they do not contain any white dot.
+                const maxAttempts = 20;
+                let candidatesFound = 0;
+                for (let i = 0; i < 10; i++) {
+                    let candidate;
+                    let attempts = 0;
+                    while (attempts < maxAttempts) {
+                        const L = leftLower + Math.random() * (leftUpper - leftLower);
+                        const R = rightLower + Math.random() * (rightUpper - rightLower);
+                        const T = topLower + Math.random() * (topUpper - topLower);
+                        const B = bottomLower + Math.random() * (bottomUpper - bottomLower);
+                        candidate = { x: L, y: T, width: R - L, height: B - T };
+                        // Check that candidate covers the black dot bounding box
+                        if (candidate.x <= blackMinX &&
+                            candidate.x + candidate.width >= blackMaxX &&
+                            candidate.y <= blackMinY &&
+                            candidate.y + candidate.height >= blackMaxY) {
+                            // And candidate does not contain any white dot.
+                            if (!containsWhite(candidate)) {
+                                candidateBoxes.push(candidate);
+                                candidatesFound++;
+                                break;
+                            }
+                        }
+                        attempts++;
+                    }
+                }
+            } else {
+                // No black dots: fallback to sampling candidate rectangles anywhere,
+                // but ensure they do not contain any white dot.
+                const maxAttempts = 20;
+                for (let i = 0; i < 10; i++) {
+                    let candidate;
+                    let attempts = 0;
+                    while (attempts < maxAttempts) {
+                        const L = Math.random() * (envSize - minSize);
+                        const R = L + minSize + Math.random() * (envSize - L - minSize);
+                        const T = Math.random() * (envSize - minSize);
+                        const B = T + minSize + Math.random() * (envSize - T - minSize);
+                        candidate = { x: L, y: T, width: R - L, height: B - T };
+                        if (!containsWhite(candidate)) {
+                            candidateBoxes.push(candidate);
+                            break;
+                        }
+                        attempts++;
+                    }
+                }
+            }
+        }
+
+        // --------------------------------------------------------------------------------
+        // Animation loop
+        // --------------------------------------------------------------------------------
+        let lastTimestamp = 0;
+        function animate(timestamp) {
+            let dt = (timestamp - lastTimestamp) / 1000;
+            lastTimestamp = timestamp;
+
+            refreshMainCanvas();
+            updateCameraView();
+
+            // Sensor sampling at 5 Hz.
+            if (timestamp - lastSensorSampleTime >= sensorSampleInterval) {
+                sampleSensorPoints();
+                lastSensorSampleTime = timestamp;
+            }
+
+            // Candidate estimation at its own rate.
+            if (timestamp - lastCandidateEstimationTime >= candidateEstimationInterval) {
+                estimateCandidateRectangles();
+                lastCandidateEstimationTime = timestamp;
+            }
+
+            requestAnimationFrame(animate);
+        }
+
+        // --------------------------------------------------------------------------------
+        // Event listeners
+        // --------------------------------------------------------------------------------
+        document.getElementById("env-container").addEventListener("mousemove", (event) => {
+            const bounds = document.getElementById("env-container").getBoundingClientRect();
+            targetX = event.clientX - bounds.left;
+            targetY = event.clientY - bounds.top;
+        });
+
+        document.getElementById("env-container").addEventListener("touchmove", (event) => {
+            // Prevent default scrolling behavior on mobile devices.
+            event.preventDefault();
+            const rect = document.getElementById("env-container").getBoundingClientRect();
+            const touch = event.touches[0];
+            const touchX = touch.clientX - rect.left;
+            const touchY = touch.clientY - rect.top;
+            targetX = touchX;
+            targetY = touchY;
+        }, { passive: false });
+
+        randomizeButton.addEventListener("click", () => {
+            generateEnvironment();
+            refreshMainCanvas();
+            centerCamera();
+            updateCameraView();
+        });
+
+        camSizeSlider.addEventListener("input", function () {
+            camSize = parseInt(this.value);
+            camSizeValue.textContent = camSize;
+            updateCameraView();
+        });
+
+        gridCountSlider.addEventListener("input", function () {
+            numSamples = parseInt(this.value);
+            gridCountValue.textContent = numSamples;
+        });
+
+        // sensorUncertaintySlider.addEventListener("input", function () {
+        //     sensorUncertainty = parseFloat(this.value);
+        //     sensorUncertaintyValue.textContent = sensorUncertainty;
+        // });
+
+        toggleBgButton.addEventListener("click", () => {
+            showBackground = !showBackground;
+            toggleBgButton.textContent = showBackground ? "Hide Background" : "Show Background";
+            refreshMainCanvas();
+            updateCameraView();
+        });
+
+        batchSizeSlider.addEventListener("input", function () {
+            maxSensorDots = parseInt(this.value);
+            batchSizeValue.textContent = maxSensorDots;
+        });
+
+        modeSelect.addEventListener('change', () => {
+            const chosenMode = parseInt(modeSelect.value, 10);
+            console.log('User picked mode:', chosenMode);
+            // ...then update your logic based on chosenMode
+            batchSelectionMode = chosenMode;
+        });
+
+        // --------------------------------------------------------------------------------
+        // Initial startup
+        // --------------------------------------------------------------------------------
+        generateEnvironment();
+        refreshMainCanvas();
+        centerCamera();
+        updateCameraView();
+        requestAnimationFrame(animate);
+
+    </script>
+
+</body>
+
+</html>
